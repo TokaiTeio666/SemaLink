@@ -14,7 +14,7 @@ MVP 仅支持两台设备，不接入小艺，不执行真实文档检索，不�
 
 - 两台设备登录同一华为账号，使用相同 `bundleName`，并完成可信设备组网。
 - `Distributed Service Kit` 是 MVP 唯一的通信底座，`Network Kit` 留待后续扩展。
-- 通过系统设备选择界面选择对端，应用不实现自有设备发现 UI。
+- 通过 `distributedDeviceManager.getAvailableDeviceList()` 查询可信设备。只有恰好一个可用对端时自动连接；0 台或多于 1 台时停止连接并提示用户调整设备环境。
 - 同一个 HAP 支持手动选择发起端或响应端；通过协同流程拉起时自动进入响应端模式。
 - 一次连接可顺序执行多个查询，同一时刻最多存在一个未完成请求。
 - 失败后不自动重连或重发，由用户决定是否恢复。
@@ -27,11 +27,13 @@ MVP 仅支持两台设备，不接入小艺，不执行真实文档检索，不�
 flowchart TB
     UI["Index 单页 UI"] --> QC["QueryCoordinator"]
     EA["EntryAbility 生命周期"] --> QC
+    QC --> DR["TrustedDeviceResolver"]
     QC --> SM["SessionManager"]
     QC --> MS["MockSummaryService"]
     SM --> PC["ProtocolCodec"]
     SM --> CT["CollaborationTransport"]
     CT --> DSK["Distributed Service Kit"]
+    DR --> DSK
     QC --> AS["AppStateStore"]
     AS --> UI
 ```
@@ -42,9 +44,10 @@ flowchart TB
 
 | 模块 | 职责 | 依赖 | 禁止承担的职责 |
 |---|---|---|---|
-| `Index.ets` | 提供角色选择、连接操作、问题输入、摘要、状态和可操作的错误提示 | `QueryCoordinator`、`AppStateStore` | 直接调用系统通信 API 或修改会话状态 |
+| `Index.ets` | 提供角色选择、自动连接操作、问题输入、摘要、状态和可操作的错误提示 | `QueryCoordinator`、`AppStateStore` | 直接调用系统通信 API 或修改会话状态 |
 | `EntryAbility` | 识别普通启动与协同启动，并转发生命周期事件 | `QueryCoordinator` | 解析协议消息或生成摘要 |
 | `QueryCoordinator` | 提供连接、提交和断开用例，并路由请求与响应 | `SessionManager`、`MockSummaryService`、`AppStateStore` | 直接调用 `Distributed Service Kit` |
+| `TrustedDeviceResolver` | 查询可用可信设备，并将 0/1/多设备结果转换为错误或唯一 `PeerDevice` | `distributedDeviceManager` | 创建会话、渲染设备列表或静默任选设备 |
 | `SessionManager` | 管理会话状态、监听器、计时器、待处理请求、结果缓存、消息收发和资源清理 | `Transport`、`ProtocolCodec` | 渲染 UI 或实现模拟检索 |
 | `CollaborationTransport` | 将 `Distributed Service Kit` 回调适配为应用传输事件 | `Distributed Service Kit` | 解释业务 payload |
 | `ProtocolCodec` | 编码、解码、消息大小检查和协议信封校验 | 协议模型 | 执行业务决策或重试决策 |
@@ -60,6 +63,7 @@ entry/src/main/ets/
 |-- application/QueryCoordinator.ets
 |-- communication/
 |   |-- Transport.ets
+|   |-- TrustedDeviceResolver.ets
 |   |-- CollaborationTransport.ets
 |   `-- SessionManager.ets
 |-- protocol/
@@ -161,8 +165,8 @@ sequenceDiagram
     participant MB as "B MockSummaryService"
 
     UIA->>SA: 选择发起端并连接
-    SA->>DSK: 打开系统设备选择界面
-    DSK-->>SA: 返回选中的可信设备
+    SA->>DSK: 查询可用可信设备
+    DSK-->>SA: 返回唯一可信设备
     SA->>DSK: 创建协同会话
     DSK->>SB: 拉起 EntryAbility
     SB->>SB: 识别协同启动并设为响应端
@@ -183,9 +187,9 @@ sequenceDiagram
 ### 5.1 连接流程
 
 1. 普通启动时角色为 `UNSELECTED`，用户选择发起端。
-2. 点击连接后打开系统设备选择界面。
-3. 用户取消选择时返回 `IDLE`，不将其报告为通信错误。
-4. 用户选中设备后创建协同会话，连接超时为 10 秒。
+2. 点击连接后，通过 `distributedDeviceManager.getAvailableDeviceList()` 查询可用可信设备。
+3. 结果为 0 台时返回 `E_DEVICE_NOT_FOUND`；多于 1 台时返回 `E_MULTIPLE_DEVICES`。两种情况都不创建协同会话，也不自动选择任意设备。
+4. 结果恰好为 1 台时，以其 `deviceId` 创建 `PeerInfo` 和协同会话，连接超时为 10 秒。
 5. 系统拉起对端，`EntryAbility` 识别协同启动并自动进入响应端模式。
 6. 两端进入 `CONNECTED`，连接保持打开，以支持顺序执行多个查询。
 
@@ -221,8 +225,8 @@ interface AppError {
 
 | 异常场景 | 系统处理 | 用户操作 |
 |---|---|---|
-| 取消设备选择 | 返回 `IDLE`，不显示错误弹窗 | 重新选择 |
-| 没有可用的可信设备 | 结束连接流程，提示检查账号、蓝牙和可信组网 | 重新连接 |
+| 没有可用的可信设备 | 返回 `E_DEVICE_NOT_FOUND`，结束连接流程，提示检查账号、Wi-Fi、蓝牙和可信组网 | 修正环境后手动重连 |
+| 存在多个可用可信设备 | 返回 `E_MULTIPLE_DEVICES`，不静默任选设备 | 仅保留目标设备在线后手动重连 |
 | 权限或系统能力不可用 | 在元数据中保留系统错误码，不自动重试 | 修正设备环境 |
 | 连接超过 10 秒 | 释放未完成会话并进入 `ERROR` | 手动重连 |
 | 问题为空或超长 | 不发送消息，保持 `CONNECTED` | 修改问题 |
@@ -253,6 +257,7 @@ interface AppError {
 - `ProtocolCodec`：覆盖合法消息、非法 JSON、字段缺失、未知版本、未知类型、问题超长和消息超过 16 KiB。
 - `MockSummaryService`：验证输出确定性、摘要包含问题内容、安全截断、输出限制，以及不依赖文件、数据库或网络。
 - `QueryCoordinator`：验证状态限制、单请求规则、ACK/RESULT 匹配、超时清理和迟到结果丢弃。
+- `TrustedDeviceResolver`：验证 0 台返回 `E_DEVICE_NOT_FOUND`、1 台返回唯一对端、多台返回 `E_MULTIPLE_DEVICES`，并确认释放 `DeviceManager`。
 - `SessionManager`：验证连接、发送失败、断线、忙碌响应、重复请求、监听器注销、计时器释放和幂等清理。
 - 测试使用 `FakeTransport`，不依赖 `Distributed Service Kit` 或真机。
 
@@ -284,7 +289,7 @@ interface AppError {
 
 1. 建立连接并开始查询，在处理期间关闭 B 或中断可信连接。
 2. 验证 A 报告断线、清除未完成任务，且不自动重试。
-3. 手动重新选择 B 并建立连接。
+3. 仅保留 B 为唯一可用可信设备，手动重新建立连接。
 4. 提交一条查询并收到合法摘要。
 
 ### 8.4 验收标准

@@ -44,6 +44,27 @@ function boundedFrequency(primaryTerms: string[], ngrams: string[], text: string
   return Math.min(1, weightedHits / Math.max(1, primaryTerms.length));
 }
 
+function ngramEvidence(ngrams: string[], text: string): number {
+  const lower = text.toLowerCase();
+  let evidence = 0;
+  for (const ngram of ngrams) {
+    if (lower.includes(ngram)) {
+      evidence += ngram.length >= 3 ? 0.25 : 0.10;
+    }
+  }
+  return Math.min(1, evidence);
+}
+
+function hasDiscriminatingNgrams(matchedNgrams: string[]): boolean {
+  let strong = 0;
+  for (const ngram of matchedNgrams) {
+    if (ngram.length >= 3) {
+      strong += 1;
+    }
+  }
+  return strong >= 2 || strong >= 1 && matchedNgrams.length >= 4;
+}
+
 function compact(text: string): string {
   return text.toLowerCase().replace(/[\s，。？！、；：,.?!;:()（）\[\]【】]+/g, '');
 }
@@ -61,10 +82,14 @@ export function scoreChunk(analysis: QueryAnalysis, document: KnowledgeDocument,
   const multiplePrimaryTerms = analysis.primaryTerms.length > 1;
   const passesQualityGate = analysis.primaryTerms.length > 0 &&
     (exactPhraseMatched || !multiplePrimaryTerms && matchedPrimary.length >= 1 ||
-      multiplePrimaryTerms && matchedPrimary.length >= 2);
-  const titleScore = ratio(analysis.primaryTerms, document.title);
-  const tagScore = ratio(analysis.primaryTerms, document.tags.join(' '));
-  const coverageScore = analysis.primaryTerms.length === 0 ? 0 : matchedPrimary.length / analysis.primaryTerms.length;
+      multiplePrimaryTerms && matchedPrimary.length >= 2 || hasDiscriminatingNgrams(matchedNgrams));
+  const titleScore = Math.max(ratio(analysis.primaryTerms, document.title),
+    ngramEvidence(analysis.ngrams, document.title));
+  const tagScore = Math.max(ratio(analysis.primaryTerms, document.tags.join(' ')),
+    ngramEvidence(analysis.ngrams, document.tags.join(' ')));
+  const primaryCoverage = analysis.primaryTerms.length === 0 ? 0 : matchedPrimary.length / analysis.primaryTerms.length;
+  const ngramCoverage = ngramEvidence(analysis.ngrams, searchableText);
+  const coverageScore = primaryCoverage * 0.75 + ngramCoverage * 0.25;
   const frequencyScore = boundedFrequency(analysis.primaryTerms, analysis.ngrams, chunk.text);
   const phraseScore = exactPhraseMatched ? 1 : 0;
   const score = titleScore * 0.25 + tagScore * 0.20 + coverageScore * 0.25 +

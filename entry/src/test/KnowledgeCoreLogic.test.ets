@@ -189,6 +189,100 @@ export default function knowledgeCoreLogicTest() {
       expect(results.length).assertEqual(0);
     });
 
+    it('retrieves a scheduling paraphrase from discriminating Chinese ngrams', 0, () => {
+      const documents: KnowledgeDocument[] = [
+        document('doc-scheduling', '进程调度算法', ['操作系统', '调度'], '优先级调度与老化'),
+        document('doc-arkts', 'ArkTS 与 ArkUI', ['HarmonyOS', '系统'], '强类型系统')
+      ];
+      const chunks: DocumentChunk[] = [
+        chunk('chunk-scheduling', 'doc-scheduling', 0,
+          '优先级调度先运行优先级高的任务，可用老化机制避免低优先级任务长期得不到执行。'),
+        chunk('chunk-arkts', 'doc-arkts', 0, 'ArkTS 是 HarmonyOS 应用开发使用的强类型编程语言。')
+      ];
+      const results = new KeywordRetrievalEngine().search(query('怎样避免低优先级任务一直没有机会运行'),
+        documents, chunks);
+      expect(results.length > 0).assertTrue();
+      expect(results[0].document.documentId).assertEqual('doc-scheduling');
+    });
+
+    it('prefers specific time-slice evidence over generic system words', 0, () => {
+      const documents: KnowledgeDocument[] = [
+        document('doc-scheduling', '进程调度算法', ['操作系统', '调度'], '时间片轮转'),
+        document('doc-arkts', 'ArkTS 与 ArkUI', ['HarmonyOS', '系统'], '强类型系统')
+      ];
+      const chunks: DocumentChunk[] = [
+        chunk('chunk-scheduling', 'doc-scheduling', 0, '时间片轮转为每个就绪任务分配固定时间片，适合交互系统。'),
+        chunk('chunk-arkts', 'doc-arkts', 0, '严格类型有助于在编译阶段发现不安全的数据流。')
+      ];
+      const results = new KeywordRetrievalEngine().search(query('时间片轮转适合什么类型的系统'), documents, chunks);
+      expect(results.length > 0).assertTrue();
+      expect(results[0].document.documentId).assertEqual('doc-scheduling');
+    });
+
+    it('retrieves a noisy transaction query without weakening unrelated rejection', 0, () => {
+      const documents: KnowledgeDocument[] = [
+        document('doc-tx', '数据库事务', ['数据库', '事务'], '隔离级别'),
+        document('doc-index', '数据库索引', ['数据库', '索引'], '查询优化')
+      ];
+      const chunks: DocumentChunk[] = [
+        chunk('chunk-tx', 'doc-tx', 0, '隔离级别应根据脏读、不可重复读和幻读风险选择。'),
+        chunk('chunk-index', 'doc-index', 0, '查询优化器根据统计信息选择全表扫描或索引访问。')
+      ];
+      const engine = new KeywordRetrievalEngine();
+      const results = engine.search(query('暂不讨论索引，如何按脏读、不可重复读和幻读风险选择隔离强度？'),
+        documents, chunks);
+      expect(results.length > 0).assertTrue();
+      expect(results[0].document.documentId).assertEqual('doc-tx');
+      expect(engine.search(query('量子引力黑洞蒸发实验数据'), documents, chunks).length).assertEqual(0);
+    });
+
+    it('uses separated process and thread concepts in a long paraphrase', 0, () => {
+      const documents: KnowledgeDocument[] = [
+        document('doc-process', '进程与线程', ['操作系统', '并发'], '进程线程'),
+        document('doc-other', '并发工程', ['工程'], '并发')
+      ];
+      const chunks: DocumentChunk[] = [
+        chunk('chunk-process', 'doc-process', 0,
+          '进程强调资源隔离，线程是处理器调度和执行的基本单位。'),
+        chunk('chunk-other', 'doc-other', 0, '任务执行需要工程边界和恢复策略。')
+      ];
+      const results = new KeywordRetrievalEngine().search(
+        query('为什么说任务隔离通常由进程承担，而执行调度落在线程上？'), documents, chunks);
+      expect(results.length > 0).assertTrue();
+      expect(results[0].document.documentId).assertEqual('doc-process');
+    });
+
+    it('uses heap coverage to distinguish a process document from a broad concurrency document', 0, () => {
+      const documents: KnowledgeDocument[] = [
+        document('doc-process', '进程与线程', ['操作系统'], '线程共享堆和文件'),
+        document('doc-concurrency', '操作系统并发工程', ['操作系统', '并发'], '共享文件')
+      ];
+      const chunks: DocumentChunk[] = [
+        chunk('chunk-process', 'doc-process', 0, '同一进程内的线程共享代码、堆和打开的文件。'),
+        chunk('chunk-concurrency', 'doc-concurrency', 0, '并发执行单元共享文件描述符并需要明确资源所有权。')
+      ];
+      const results = new KeywordRetrievalEngine().search(
+        query('部署开销先不谈，同一个程序里的执行单元怎样共享堆和文件？'), documents, chunks);
+      expect(results.length > 0).assertTrue();
+      expect(results[0].document.documentId).assertEqual('doc-process');
+    });
+
+    it('combines static typing and page boundary concepts across document paragraphs', 0, () => {
+      const documents: KnowledgeDocument[] = [
+        document('doc-arkts', 'ArkTS 与 ArkUI', ['HarmonyOS', 'ArkTS'], '强类型页面边界'),
+        document('doc-stage', 'HarmonyOS Stage 模型', ['HarmonyOS', 'Stage'], '页面生命周期')
+      ];
+      const chunks: DocumentChunk[] = [
+        chunk('chunk-arkts', 'doc-arkts', 0,
+          'ArkTS 是强类型编程语言，严格类型有助于编译阶段检查。业务服务与持久化逻辑应和页面保持清晰边界。'),
+        chunk('chunk-stage', 'doc-stage', 0, '页面加载在 UIAbility 生命周期中完成。')
+      ];
+      const results = new KeywordRetrievalEngine().search(
+        query('静态类型检查与页面业务边界为什么都重要？'), documents, chunks);
+      expect(results.length > 0).assertTrue();
+      expect(results[0].document.documentId).assertEqual('doc-arkts');
+    });
+
     it('records internal match evidence without changing deterministic order', 0, () => {
       const engine = new KeywordRetrievalEngine();
       const first = engine.search(query('TCP 为什么会发生粘包'), representativeDocuments(), representativeChunks());

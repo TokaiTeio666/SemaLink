@@ -5,8 +5,36 @@ const QUERY_STOP_WORDS: string[] = [
 ];
 
 const WEAK_TERMS: Set<string> = new Set<string>([
-  '数据', '内容', '有关', '关于', '信息', '资料', '情况', '问题', '作用', '区别', '特性'
+  '数据', '内容', '有关', '关于', '信息', '资料', '情况', '问题', '作用', '区别', '特性',
+  '系统', '类型', '工程', '阶段', '路径', '机制', '任务', '结果', '影响', '能力'
 ]);
+
+const DOMAIN_CONCEPT_TERMS: string[] = [
+  '进程', '线程', '隔离', '调度', '执行', '共享', '地址空间', '文件', '堆', '栈',
+  '时间片', '优先级', '老化', '饥饿', '队列', '吞吐量', '响应时间',
+  '单元测试', '集成测试', '系统测试', '验收测试', '回归测试', '需求', '验收标准',
+  'arkts', 'arkui', '强类型', '静态类型', '声明式', '页面', '业务', '边界',
+  '生命周期', 'uiability', 'windowstage',
+  'tcp', '字节流', '粘包', '拆包', '半包', '消息边界', '长度前缀', '重传', '确认',
+  '序列号', '接收窗口', '流量控制', '拥塞控制', '慢启动', '心跳', '重连', '超时', 'tls',
+  '事务', '原子性', '一致性', '隔离性', '持久性', '回滚', '隔离级别', '脏读', '幻读',
+  '索引', '复合索引', '唯一索引', '全表扫描', '优化器', '统计信息', '范围查询',
+  '数据竞争', '互斥', '临界区', '条件变量', '信号量', '读写锁', '死锁', '取消', '背压'
+];
+
+interface ConceptAlias {
+  expression: string;
+  canonicalTerm: string;
+}
+
+const DOMAIN_CONCEPT_ALIASES: ConceptAlias[] = [
+  { expression: '程序', canonicalTerm: '进程' },
+  { expression: '执行单元', canonicalTerm: '线程' },
+  { expression: '静态类型', canonicalTerm: '强类型' },
+  { expression: '没有机会运行', canonicalTerm: '饥饿' },
+  { expression: '消息定界', canonicalTerm: '消息边界' },
+  { expression: '失败后恢复', canonicalTerm: '回滚' }
+];
 
 export interface QueryAnalysis {
   normalizedQuery: string;
@@ -62,6 +90,16 @@ function addChineseAnalysis(sequence: string, primary: string[], primarySeen: Se
   for (const part of parts) {
     if (part.length >= 2 && !WEAK_TERMS.has(part)) {
       addUnique(primary, primarySeen, part);
+    }
+  }
+  for (const concept of DOMAIN_CONCEPT_TERMS) {
+    if (sequence.toLowerCase().includes(concept)) {
+      addUnique(primary, primarySeen, concept);
+    }
+  }
+  for (const alias of DOMAIN_CONCEPT_ALIASES) {
+    if (sequence.includes(alias.expression)) {
+      addUnique(primary, primarySeen, alias.canonicalTerm);
     }
   }
   for (let size = 2; size <= 3; size++) {

@@ -3,6 +3,34 @@
     {
       "name": "start_window_background",
       "value": "#FFFFFF"
+    },
+    {
+      "name": "page_background",
+      "value": "#F5F7FA"
+    },
+    {
+      "name": "surface",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "accent",
+      "value": "#1769AA"
+    },
+    {
+      "name": "text_primary",
+      "value": "#172B4D"
+    },
+    {
+      "name": "text_secondary",
+      "value": "#5E6C84"
+    },
+    {
+      "name": "status_error",
+      "value": "#C62828"
+    },
+    {
+      "name": "error_surface",
+      "value": "#FFF1F0"
     }
   ]
 }

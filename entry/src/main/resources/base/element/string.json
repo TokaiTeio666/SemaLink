@@ -15,6 +15,78 @@
     {
       "name": "distributed_datasync_permission_reason",
       "value": "用于与可信设备建立协同会话并交换查询结果"
+    },
+    {
+      "name": "app_title",
+      "value": "SemaLink"
+    },
+    {
+      "name": "role_label",
+      "value": "设备角色"
+    },
+    {
+      "name": "initiator_role",
+      "value": "发起端"
+    },
+    {
+      "name": "responder_role",
+      "value": "响应端"
+    },
+    {
+      "name": "connect_device",
+      "value": "自动连接唯一设备"
+    },
+    {
+      "name": "retry_connection",
+      "value": "重新连接"
+    },
+    {
+      "name": "connecting",
+      "value": "正在连接..."
+    },
+    {
+      "name": "question_placeholder",
+      "value": "输入要查询的问题"
+    },
+    {
+      "name": "submit_query",
+      "value": "提交查询"
+    },
+    {
+      "name": "waiting_remote_query",
+      "value": "等待远端查询"
+    },
+    {
+      "name": "result_label",
+      "value": "查询摘要"
+    },
+    {
+      "name": "time_metric",
+      "value": "耗时"
+    },
+    {
+      "name": "bytes_metric",
+      "value": "通信字节"
+    },
+    {
+      "name": "disconnect",
+      "value": "断开连接"
+    },
+    {
+      "name": "status_connected",
+      "value": "已连接"
+    },
+    {
+      "name": "status_error",
+      "value": "连接异常"
+    },
+    {
+      "name": "status_processing",
+      "value": "正在处理查询"
+    },
+    {
+      "name": "status_ready",
+      "value": "准备开始"
     }
   ]
 }

@@ -8,6 +8,7 @@ import sessionManagerTest from './SessionManager.test';
 import queryCoordinatorTest from './QueryCoordinator.test';
 import distributedPermissionControllerTest from './DistributedPermissionController.test';
 import localUnitTest from './LocalUnit.test';
+import appRuntimeTest from './AppRuntime.test';
 
 export default function testsuite(): void {
   commonModelsTest();
@@ -20,4 +21,5 @@ export default function testsuite(): void {
   queryCoordinatorTest();
   distributedPermissionControllerTest();
   localUnitTest();
+  appRuntimeTest();
 }

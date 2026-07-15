@@ -4,6 +4,8 @@ import mockSummaryServiceTest from './MockSummaryService.test';
 import trustedDeviceResolverTest from './TrustedDeviceResolver.test';
 import transportContractTest from './TransportContract.test';
 import collaborationTransportTest from './CollaborationTransport.test';
+import sessionManagerTest from './SessionManager.test';
+import distributedPermissionControllerTest from './DistributedPermissionController.test';
 import localUnitTest from './LocalUnit.test';
 
 export default function testsuite(): void {
@@ -13,5 +15,7 @@ export default function testsuite(): void {
   trustedDeviceResolverTest();
   transportContractTest();
   collaborationTransportTest();
+  sessionManagerTest();
+  distributedPermissionControllerTest();
   localUnitTest();
 }

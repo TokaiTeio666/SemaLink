@@ -778,7 +778,7 @@ git commit -m "feat: add serial request session state machine"
 - Create: `entry/src/test/QueryCoordinator.test.ets`
 - Modify: `entry/src/test/List.test.ets`
 
-- [ ] **Step 1: 写入发起端与响应端编排测试**
+- [x] **Step 1: 写入发起端与响应端编排测试**
 
 ```ts
 it('connectsOnlyResolvedPeer', 0, async () => {
@@ -795,11 +795,11 @@ it('handlesIncomingQueryOnResponder', 0, async () => {
 });
 ```
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Expected: FAIL，缺少 store 和 coordinator。
 
-- [ ] **Step 3: 实现可订阅 Store**
+- [x] **Step 3: 实现可订阅 Store**
 
 ```ts
 export type StateListener = (snapshot: AppSnapshot) => void;
@@ -820,7 +820,7 @@ export class AppStateStore {
 }
 ```
 
-- [ ] **Step 4: 实现 QueryCoordinator**
+- [x] **Step 4: 实现 QueryCoordinator**
 
 公开 API 固定为：
 
@@ -837,11 +837,11 @@ destroy(): void;
 
 构造函数接收 `resolverFactory: () => TrustedDeviceResolver`，production factory 每次创建新的 `DistributedDeviceProvider`；测试 factory 返回带 `FakeProvider` 的 resolver。这样 `connect()` 重试不会复用已经 release 的 `DeviceManager`。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 Expected: initiator、responder、0/多设备错误、单请求限制和断线状态测试全部 PASS。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```powershell
 git add entry/src/main/ets/state entry/src/main/ets/application entry/src/test

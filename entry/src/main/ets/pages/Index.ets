@@ -1,290 +1,261 @@
-import { common } from '@kit.AbilityKit';
-import { KnowledgeApplicationService } from '../application/KnowledgeApplicationService';
-import {
-  beginQueryState,
-  DisplayKnowledgeItem,
-  failQueryState,
-  initialQueryState,
-  KnowledgeQueryDisplayState,
-  succeedQueryState
-} from '../application/KnowledgeQueryDisplayState';
-import { KnowledgeError } from '../contracts/knowledge/KnowledgeError';
-import {
-  KnowledgePayloadLevel,
-  KnowledgeProfile,
-  LocalKnowledgeQuery,
-  LocalKnowledgeResult
-} from '../contracts/knowledge/KnowledgeModels';
-import { L1KnowledgePayload, L2KnowledgePayload } from '../contracts/knowledge/KnowledgePayloadSchemas';
+import { AppError } from '../common/AppError';
+import { AppRuntime } from '../runtime/AppRuntime';
+import { AppSnapshot, ConnectionState, DeviceRole, INITIAL_SNAPSHOT, cloneSnapshot } from '../model/AppModels';
+
+export function isBusy(state: ConnectionState): boolean {
+  return state === ConnectionState.CONNECTING || state === ConnectionState.SELECTING_DEVICE ||
+    state === ConnectionState.WAITING_ACK || state === ConnectionState.WAITING_RESULT;
+}
+
+export function canSubmit(snapshot: AppSnapshot, question: string): boolean {
+  return snapshot.role === DeviceRole.INITIATOR && snapshot.connectionState === ConnectionState.CONNECTED &&
+    question.trim().length >= 1 && question.length <= 1000;
+}
+
+export function shouldShowConnect(snapshot: AppSnapshot): boolean {
+  return snapshot.role === DeviceRole.INITIATOR &&
+    (snapshot.connectionState === ConnectionState.IDLE ||
+      snapshot.connectionState === ConnectionState.DISCONNECTED ||
+      snapshot.connectionState === ConnectionState.ERROR);
+}
 
 @Entry
 @Component
 struct Index {
-  private readonly service: KnowledgeApplicationService = new KnowledgeApplicationService();
-  @State private loading: boolean = true;
-  @State private operationText: string = '正在初始化';
-  @State private queryText: string = '进程和线程有什么区别';
-  @State private topKText: string = '5';
-  @State private budgetText: string = '4096';
-  @State private level: KnowledgePayloadLevel = 'L1';
-  @State private indexState: string = 'EMPTY';
-  @State private documentCount: number = 0;
-  @State private chunkCount: number = 0;
-  @State private domains: string = '-';
-  @State private indexVersion: string = 'index-empty';
-  @State private profileVersion: string = 'profile-empty';
-  @State private retrievalSummary: string = '尚未查询';
-  @State private results: DisplayKnowledgeItem[] = [];
-  @State private errorText: string = '';
+  @State snapshot: AppSnapshot = INITIAL_SNAPSHOT;
+  @State question: string = '';
+  private unsubscribe?: () => void;
 
   aboutToAppear(): void {
-    this.initialize();
+    this.unsubscribe = AppRuntime.current().store.subscribe((state: AppSnapshot) => {
+      this.snapshot = state;
+      this.question = state.question;
+    });
   }
 
-  private async initialize(): Promise<void> {
-    this.loading = true;
-    this.operationText = '正在初始化';
-    try {
-      const context = getContext(this) as common.UIAbilityContext;
-      await this.service.initialize(context);
-      await this.refreshProfile();
-    } catch (error) {
-      this.results = [];
-      this.retrievalSummary = '初始化失败';
-      this.showError(error);
-    } finally {
-      this.loading = false;
-      this.operationText = '';
-    }
-  }
-
-  private async importDocuments(): Promise<void> {
-    if (this.loading) return;
-    this.loading = true;
-    this.operationText = '正在导入';
-    this.errorText = '';
-    try {
-      const report = await this.service.importBuiltInDocuments();
-      this.retrievalSummary = '导入 ' + report.importedDocuments.toString() + '，跳过 ' +
-        report.skippedDocuments.toString() + '，新增分块 ' + report.createdChunks.toString();
-      await this.refreshProfile();
-    } catch (error) {
-      this.results = [];
-      this.retrievalSummary = '导入失败';
-      this.showError(error);
-    } finally {
-      this.loading = false;
-      this.operationText = '';
-    }
-  }
-
-  private async selectAndImportDocuments(): Promise<void> {
-    if (this.loading) return;
-    this.loading = true;
-    this.operationText = '正在导入';
-    this.errorText = '';
-    try {
-      const report = await this.service.selectAndImportTextDocuments();
-      this.retrievalSummary = '导入 ' + report.importedDocuments.toString() + '，跳过 ' +
-        report.skippedDocuments.toString() + '，失败 ' + report.failedDocuments.toString() +
-        '，新增分块 ' + report.createdChunks.toString();
-      await this.refreshProfile();
-    } catch (error) {
-      this.results = [];
-      this.retrievalSummary = '导入失败';
-      this.showError(error);
-    } finally {
-      this.loading = false;
-      this.operationText = '';
-    }
-  }
-
-  private async clearKnowledge(): Promise<void> {
-    if (this.loading) return;
-    this.loading = true;
-    this.operationText = '正在清空';
-    try {
-      await this.service.clearKnowledgeBase();
-      this.results = [];
-      this.retrievalSummary = '知识库已清空';
-      await this.refreshProfile();
-    } catch (error) {
-      this.results = [];
-      this.retrievalSummary = '清空失败';
-      this.showError(error);
-    } finally {
-      this.loading = false;
-      this.operationText = '';
-    }
-  }
-
-  private async runQuery(): Promise<void> {
-    if (this.loading) return;
-    this.loading = true;
-    this.operationText = '正在查询';
-    this.applyQueryState(beginQueryState(this.currentQueryState()));
-    try {
-      const request: LocalKnowledgeQuery = {
-        contractVersion: '1.0',
-        requestId: 'local-' + Date.now().toString(),
-        queryText: this.queryText,
-        topK: Number.parseInt(this.topKText),
-        requestedLevel: this.level,
-        maxPayloadBytes: Number.parseInt(this.budgetText)
-      };
-      const result = await this.service.query(request);
-      this.applyQueryState(succeedQueryState(this.toDisplayItems(result), result.retrievalMs, result.truncated));
-    } catch (error) {
-      if (error instanceof KnowledgeError) {
-        this.applyQueryState(failQueryState(this.currentQueryState(), error.code, error.message));
-      } else {
-        this.applyQueryState(failQueryState(this.currentQueryState(), 'E_RETRIEVAL_FAILED', '操作失败'));
-      }
-    } finally {
-      this.loading = false;
-      this.operationText = '';
-    }
-  }
-
-  private async refreshProfile(): Promise<void> {
-    const profile: KnowledgeProfile = await this.service.getKnowledgeProfile();
-    this.indexState = profile.indexState;
-    this.documentCount = profile.documentCount;
-    this.chunkCount = profile.chunkCount;
-    const labels: string[] = [];
-    for (const domain of profile.knowledgeDomains) {
-      labels.push(domain.tag + ' ' + domain.weight.toFixed(2));
-    }
-    this.domains = labels.length === 0 ? '-' : labels.join(' · ');
-    this.indexVersion = profile.indexVersion;
-    this.profileVersion = profile.profileVersion;
-  }
-
-  private async refreshProfileAction(): Promise<void> {
-    if (this.loading) return;
-    this.loading = true;
-    this.operationText = '正在刷新画像';
-    this.errorText = '';
-    try {
-      await this.refreshProfile();
-      this.retrievalSummary = '知识画像已刷新';
-    } catch (error) {
-      this.results = [];
-      this.retrievalSummary = '刷新画像失败';
-      this.showError(error);
-    } finally {
-      this.loading = false;
-      this.operationText = '';
-    }
-  }
-
-  private toDisplayItems(result: LocalKnowledgeResult): DisplayKnowledgeItem[] {
-    const display: DisplayKnowledgeItem[] = [];
-    if (result.level === 'L1') {
-      const payload = JSON.parse(result.payloadJson) as L1KnowledgePayload;
-      for (const item of payload.items) {
-        display.push({
-          title: item.title,
-          relevance: item.relevance,
-          content: item.summary,
-          kind: '摘要',
-          chunkLabel: ''
-        });
-      }
-    } else {
-      const payload = JSON.parse(result.payloadJson) as L2KnowledgePayload;
-      for (const item of payload.items) {
-        display.push({
-          title: item.title,
-          relevance: item.relevance,
-          content: item.snippet,
-          kind: '命中段落',
-          chunkLabel: this.safeChunkLabel(item.chunkId)
-        });
-      }
-    }
-    return display;
-  }
-
-  private currentQueryState(): KnowledgeQueryDisplayState {
-    const base = initialQueryState();
-    return {
-      status: base.status,
-      summary: this.retrievalSummary,
-      errorText: this.errorText,
-      items: this.results
-    };
-  }
-
-  private applyQueryState(state: KnowledgeQueryDisplayState): void {
-    this.retrievalSummary = state.summary;
-    this.errorText = state.errorText;
-    this.results = state.items;
-  }
-
-  private safeChunkLabel(chunkId: string): string {
-    const suffixLength: number = Math.min(8, chunkId.length);
-    return '分块 …' + chunkId.substring(chunkId.length - suffixLength);
-  }
-
-  private showError(error: Error): void {
-    if (error instanceof KnowledgeError) {
-      this.errorText = error.code + ': ' + error.message;
-    } else {
-      this.errorText = 'E_RETRIEVAL_FAILED: 操作失败';
-    }
+  aboutToDisappear(): void {
+    this.unsubscribe?.();
+    this.unsubscribe = undefined;
   }
 
   build() {
     Scroll() {
-      Column({ space: 12 }) {
-        Text('SemaLink Local Knowledge').fontSize(24).fontWeight(FontWeight.Bold)
-        Text('状态 ' + this.indexState + ' · 文档 ' + this.documentCount.toString() +
-          ' · 分块 ' + this.chunkCount.toString()).fontSize(16)
-        Text('领域：' + this.domains).fontSize(13).fontColor('#555555')
-        Text('索引：' + this.indexVersion + '\n画像：' + this.profileVersion).fontSize(12).fontColor('#777777')
-        Row({ space: 8 }) {
-          Button('导入内置文档').onClick((): void => { this.importDocuments(); }).enabled(!this.loading)
-          Button('选择 TXT/MD').onClick((): void => { this.selectAndImportDocuments(); }).enabled(!this.loading)
-          Button('清空').onClick((): void => { this.clearKnowledge(); }).enabled(!this.loading)
+      Column({ space: 16 }) {
+        this.header()
+        this.roleSelector()
+        this.connectionSection()
+        if (this.snapshot.role === DeviceRole.RESPONDER) {
+          this.responderSection()
+        } else {
+          this.querySection()
         }
-        TextInput({ text: this.queryText, placeholder: '输入本地知识问题' })
-          .onChange((value: string): void => { this.queryText = value; })
-        Row({ space: 8 }) {
-          TextInput({ text: this.topKText, placeholder: 'Top-K' }).width('30%')
-            .type(InputType.Number).onChange((value: string): void => { this.topKText = value; })
-          TextInput({ text: this.budgetText, placeholder: '字节预算' }).width('40%')
-            .type(InputType.Number).onChange((value: string): void => { this.budgetText = value; })
-          Button(this.level).onClick((): void => { this.level = this.level === 'L1' ? 'L2' : 'L1'; })
-        }
-        Button(this.loading ? this.operationText : '执行查询').width('100%')
-          .onClick((): void => { this.runQuery(); }).enabled(!this.loading)
-        Button('刷新知识画像').width('100%').onClick((): void => {
-          this.refreshProfileAction();
-        }).enabled(!this.loading)
-        Text(this.retrievalSummary).fontSize(14).fontColor('#336699')
-        if (this.errorText.length > 0) {
-          Text(this.errorText).fontSize(14).fontColor(Color.Red)
-        }
-        ForEach(this.results, (item: DisplayKnowledgeItem) => {
-          Column({ space: 6 }) {
-            Text(item.title + ' · ' + item.relevance.toFixed(3)).fontWeight(FontWeight.Bold)
-            Text(item.kind + (item.chunkLabel.length > 0 ? ' · ' + item.chunkLabel : ''))
-              .fontSize(12).fontColor('#667788')
-            Text(item.content).fontSize(14)
-          }
-          .alignItems(HorizontalAlign.Start)
-          .padding(12)
-          .width('100%')
-          .backgroundColor('#F4F6F8')
-          .borderRadius(8)
-        }, (item: DisplayKnowledgeItem): string => item.title + item.content)
+        this.resultSection()
+        this.metricsSection()
+        this.errorSection()
+        this.disconnectButton()
       }
-      .padding(16)
       .width('100%')
-      .alignItems(HorizontalAlign.Start)
+      .padding({ left: 20, right: 20, top: 24, bottom: 32 })
     }
     .width('100%')
     .height('100%')
+    .backgroundColor($r('app.color.page_background'))
+    .scrollBar(BarState.Off)
+  }
+
+  @Builder
+  header() {
+    Column({ space: 6 }) {
+      Text($r('app.string.app_title'))
+        .fontSize(28)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+      Text(this.connectionLabel())
+        .id('connection-status')
+        .fontSize(14)
+        .fontColor(this.snapshot.connectionState === ConnectionState.ERROR ?
+          $r('app.color.status_error') : $r('app.color.text_secondary'))
+        .width('100%')
+      if (this.snapshot.peerDeviceName.length > 0) {
+        Text(this.snapshot.peerDeviceName + ' · ' + this.snapshot.peerDeviceIdMasked)
+          .id('peer-device-info')
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+      }
+    }
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+  }
+
+  @Builder
+  roleSelector() {
+    Column({ space: 8 }) {
+      Text($r('app.string.role_label')).fontSize(14).fontColor($r('app.color.text_secondary'))
+      Row({ space: 8 }) {
+        Button($r('app.string.initiator_role'))
+          .id('role-selector')
+          .layoutWeight(1)
+          .enabled(this.snapshot.role === DeviceRole.UNSELECTED)
+          .backgroundColor(this.snapshot.role === DeviceRole.INITIATOR ?
+            $r('app.color.accent') : $r('app.color.surface'))
+          .fontColor(this.snapshot.role === DeviceRole.INITIATOR ? Color.White :
+            $r('app.color.text_primary'))
+          .onClick(() => AppRuntime.current().coordinator.selectInitiator())
+        Button($r('app.string.responder_role'))
+          .id('responder-selector')
+          .layoutWeight(1)
+          .enabled(false)
+          .backgroundColor(this.snapshot.role === DeviceRole.RESPONDER ?
+            $r('app.color.accent') : $r('app.color.surface'))
+          .fontColor(this.snapshot.role === DeviceRole.RESPONDER ? Color.White :
+            $r('app.color.text_primary'))
+      }
+      .width('100%')
+    }
+    .id('role-selector-section')
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+  }
+
+  @Builder
+  connectionSection() {
+    Column({ space: 10 }) {
+      if (shouldShowConnect(this.snapshot)) {
+        Button(this.snapshot.connectionState === ConnectionState.ERROR ?
+          $r('app.string.retry_connection') : $r('app.string.connect_device'))
+          .id('connect-button')
+          .width('100%')
+          .onClick(() => this.runCommand(() => AppRuntime.current().coordinator.connect()))
+      } else if (isBusy(this.snapshot.connectionState)) {
+        Row({ space: 10 }) {
+          Progress({ value: 0 })
+          Text($r('app.string.connecting')).fontColor($r('app.color.text_secondary'))
+        }
+        .id('connecting-indicator')
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  responderSection() {
+    Text($r('app.string.waiting_remote_query'))
+      .id('responder-waiting')
+      .fontSize(16)
+      .fontColor($r('app.color.text_secondary'))
+      .width('100%')
+      .padding(20)
+      .backgroundColor($r('app.color.surface'))
+  }
+
+  @Builder
+  querySection() {
+    Column({ space: 10 }) {
+      TextArea({ placeholder: $r('app.string.question_placeholder'), text: this.question })
+        .id('question-input')
+        .height(112)
+        .enabled(this.snapshot.connectionState === ConnectionState.CONNECTED)
+        .maxLength(1000)
+        .onChange((value: string) => this.question = value)
+      Button($r('app.string.submit_query'))
+        .id('submit-button')
+        .width('100%')
+        .enabled(canSubmit(this.snapshot, this.question))
+        .onClick(() => this.runCommand(() => AppRuntime.current().coordinator.submit(this.question.trim())))
+    }
+    .width('100%')
+  }
+
+  @Builder
+  resultSection() {
+    if (this.snapshot.summary.length > 0) {
+      Column({ space: 8 }) {
+        Text($r('app.string.result_label')).fontSize(14).fontColor($r('app.color.text_secondary'))
+        Text(this.snapshot.summary)
+          .id('result-summary')
+          .fontSize(17)
+          .fontColor($r('app.color.text_primary'))
+          .width('100%')
+      }
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+      .padding(16)
+      .backgroundColor($r('app.color.surface'))
+    }
+  }
+
+  @Builder
+  metricsSection() {
+    Row({ space: 8 }) {
+      this.metric($r('app.string.time_metric'), `${this.snapshot.roundTripMs} ms`, 'round-trip-ms')
+      this.metric($r('app.string.bytes_metric'), `${this.snapshot.bytesSent + this.snapshot.bytesReceived} B`, 'bytes-total')
+    }
+    .width('100%')
+  }
+
+  @Builder
+  metric(label: Resource, value: string, id: string) {
+    Column({ space: 4 }) {
+      Text(label).fontSize(12).fontColor($r('app.color.text_secondary'))
+      Text(value).id(id).fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
+    }
+    .layoutWeight(1)
+    .alignItems(HorizontalAlign.Start)
+    .padding(12)
+    .backgroundColor($r('app.color.surface'))
+  }
+
+  @Builder
+  errorSection() {
+    if (this.snapshot.error !== undefined) {
+      Column({ space: 8 }) {
+        Text(this.snapshot.error.message)
+          .id('error-message')
+          .fontColor($r('app.color.status_error'))
+          .width('100%')
+        Text(`${this.snapshot.error.code} · ${this.snapshot.error.stage}`)
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+      }
+      .id('error-section')
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+      .padding(14)
+      .backgroundColor($r('app.color.error_surface'))
+    }
+  }
+
+  @Builder
+  disconnectButton() {
+    if (this.snapshot.connectionState !== ConnectionState.IDLE &&
+      this.snapshot.connectionState !== ConnectionState.DISCONNECTED &&
+      this.snapshot.role !== DeviceRole.UNSELECTED) {
+      Button($r('app.string.disconnect'))
+        .id('disconnect-button')
+        .width('100%')
+        .backgroundColor($r('app.color.surface'))
+        .fontColor($r('app.color.text_primary'))
+        .onClick(() => this.runCommand(() => AppRuntime.current().coordinator.disconnect()))
+    }
+  }
+
+  private connectionLabel(): Resource {
+    switch (this.snapshot.connectionState) {
+      case ConnectionState.CONNECTED: return $r('app.string.status_connected');
+      case ConnectionState.ERROR: return $r('app.string.status_error');
+      case ConnectionState.WAITING_ACK:
+      case ConnectionState.WAITING_RESULT: return $r('app.string.status_processing');
+      default: return $r('app.string.status_ready');
+    }
+  }
+
+  private runCommand(command: () => Promise<void>): void {
+    command().catch((error: Object) => {
+      const appError: AppError = error as AppError;
+      this.snapshot = cloneSnapshot(this.snapshot, undefined, undefined, appError);
+    });
   }
 }

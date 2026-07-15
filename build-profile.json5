@@ -1,6 +1,20 @@
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\admin\\.ohos\\config\\default_SemaLink_CDs7CW0S6yrPmQNpDDyCrESLVMAqxZStwTp6ThWFawc=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B9C5713831956021D53E3FC69C2F7564A0B0002C76E2755D77C64F69D864C834E207C36D9F1022F",
+          "profile": "C:\\Users\\admin\\.ohos\\config\\default_SemaLink_CDs7CW0S6yrPmQNpDDyCrESLVMAqxZStwTp6ThWFawc=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\admin\\.ohos\\config\\default_SemaLink_CDs7CW0S6yrPmQNpDDyCrESLVMAqxZStwTp6ThWFawc=.p12",
+          "storePassword": "0000001B33C30C342D47084A36E29E33AD7D05C218CB8962437CE5B9A293719CE9BDACEE89EB768A2DACA9"
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",

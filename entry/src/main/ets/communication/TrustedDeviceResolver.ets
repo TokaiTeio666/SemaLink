@@ -1,4 +1,5 @@
 import { distributedDeviceManager } from '@kit.DistributedServiceKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { AppError, ErrorStage } from '../common/AppError';
 import { PeerDevice } from '../model/AppModels';
 
@@ -15,21 +16,37 @@ export class DistributedDeviceProvider implements AvailableDeviceProvider {
   }
 
   async list(): Promise<Array<PeerDevice>> {
-    const devices = await this.manager.getAvailableDeviceList();
-    const result: Array<PeerDevice> = [];
-    for (const device of devices) {
-      const peer: PeerDevice = {
-        deviceId: device.deviceId,
-        deviceName: device.deviceName,
-        deviceType: device.deviceType
-      };
-      result.push(peer);
+    try {
+      const devices = await this.manager.getAvailableDeviceList();
+      const result: Array<PeerDevice> = [];
+      for (const device of devices) {
+        const networkId: string = device.networkId ?? '';
+        const peer: PeerDevice = {
+          deviceId: networkId,
+          deviceName: device.deviceName,
+          deviceType: device.deviceType
+        };
+        result.push(peer);
+      }
+      return result;
+    } catch (error) {
+      const businessError = error as BusinessError;
+      throw new AppError(
+        'E_DEVICE_LIST_FAILED',
+        '获取设备列表失败: ' + businessError.message,
+        ErrorStage.SELECTION,
+        true,
+        businessError.code
+      );
     }
-    return result;
   }
 
   release(): void {
-    distributedDeviceManager.releaseDeviceManager(this.manager);
+    try {
+      distributedDeviceManager.releaseDeviceManager(this.manager);
+    } catch (e) {
+      // releaseDeviceManager may throw during cleanup; suppress to avoid masking primary errors
+    }
   }
 }
 

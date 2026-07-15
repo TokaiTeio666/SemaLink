@@ -77,7 +77,7 @@ export default function sessionManagerTest(): void {
       expect(manager.state).assertEqual(ConnectionState.WAITING_RESULT);
 
       const result: ProtocolEnvelope = codec.createResult('m3', query.sessionId,
-        query.requestId, 1020, { summary: '摘要', sourceDeviceAlias: 'B', processingMs: 5 });
+        query.requestId, 1020, { summary: '摘要', sourceDeviceAlias: '响应端设备', processingMs: 5 });
       transport.emitMessage(codec.encode(result));
 
       const outcome: ResultPayload = await pending;
@@ -177,7 +177,7 @@ export default function sessionManagerTest(): void {
 
       // late result should not throw or change state
       const lateResult: ProtocolEnvelope = codec.createResult('m3', query.sessionId,
-        query.requestId, 9999, { summary: 'late', sourceDeviceAlias: 'B', processingMs: 5000 });
+        query.requestId, 9999, { summary: 'late', sourceDeviceAlias: '响应端设备', processingMs: 5000 });
       transport.emitMessage(codec.encode(lateResult));
       expect(manager.state).assertEqual(ConnectionState.DISCONNECTED);
     });
@@ -190,7 +190,7 @@ export default function sessionManagerTest(): void {
       const query: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
 
       const unknownResult: ProtocolEnvelope = codec.createResult('m9', query.sessionId,
-        'unknown-rid', 1050, { summary: 'wrong', sourceDeviceAlias: 'B', processingMs: 2 });
+        'unknown-rid', 1050, { summary: 'wrong', sourceDeviceAlias: '响应端设备', processingMs: 2 });
       // should not throw and should not affect pending
       transport.emitMessage(codec.encode(unknownResult));
       expect(manager.state).assertEqual(ConnectionState.WAITING_ACK);
@@ -200,7 +200,7 @@ export default function sessionManagerTest(): void {
         query.requestId, 1010, { acceptedAt: 1010 });
       transport.emitMessage(codec.encode(ack));
       const result: ProtocolEnvelope = codec.createResult('m3', query.sessionId,
-        query.requestId, 1020, { summary: 'ok', sourceDeviceAlias: 'B', processingMs: 3 });
+        query.requestId, 1020, { summary: 'ok', sourceDeviceAlias: '响应端设备', processingMs: 3 });
       transport.emitMessage(codec.encode(result));
       const outcome: ResultPayload = await pending;
       expect(outcome.summary).assertEqual('ok');
@@ -292,7 +292,7 @@ export default function sessionManagerTest(): void {
         query.requestId, 1010, { acceptedAt: 1010 });
       transport.emitMessage(codec.encode(ack));
       const result: ProtocolEnvelope = codec.createResult('m3', query.sessionId,
-        query.requestId, 1020, { summary: 'cached answer', sourceDeviceAlias: 'B', processingMs: 3 });
+        query.requestId, 1020, { summary: 'cached answer', sourceDeviceAlias: '响应端设备', processingMs: 3 });
       transport.emitMessage(codec.encode(result));
       await pending;
       expect(manager.state).assertEqual(ConnectionState.CONNECTED);
@@ -300,7 +300,7 @@ export default function sessionManagerTest(): void {
       // Same requestId arrives again (duplicate) — should replay cached result
       transport.sentMessages = [];
       const duplicateResult: ProtocolEnvelope = codec.createResult('m99', query.sessionId,
-        query.requestId, 5000, { summary: 'different', sourceDeviceAlias: 'C', processingMs: 99 });
+        query.requestId, 5000, { summary: 'different', sourceDeviceAlias: '备用设备', processingMs: 99 });
       const listener: TransportListener = manager as TransportListener;
       listener.onMessage(codec.encode(duplicateResult));
 
@@ -322,7 +322,7 @@ export default function sessionManagerTest(): void {
       transport.emitMessage(ackText);
 
       const resultText: string = codec.encode(codec.createResult('m3', query.sessionId,
-        query.requestId, 1020, { summary: 'ok', sourceDeviceAlias: 'B', processingMs: 1 }));
+        query.requestId, 1020, { summary: 'ok', sourceDeviceAlias: '响应端设备', processingMs: 1 }));
       transport.emitMessage(resultText);
       await pending;
 
@@ -345,7 +345,7 @@ export default function sessionManagerTest(): void {
       expect(observer.stateHistory.indexOf(ConnectionState.WAITING_RESULT)).assertLarger(-1);
 
       const result: ProtocolEnvelope = codec.createResult('m3', query.sessionId,
-        query.requestId, 1020, { summary: 'ok', sourceDeviceAlias: 'B', processingMs: 1 });
+        query.requestId, 1020, { summary: 'ok', sourceDeviceAlias: '响应端设备', processingMs: 1 });
       transport.emitMessage(codec.encode(result));
       await pending;
       expect(observer.stateHistory.indexOf(ConnectionState.CONNECTED)).assertLarger(-1);
@@ -376,7 +376,7 @@ export default function sessionManagerTest(): void {
       transport.emitMessage(codec.encode(codec.createAck('m2', query.sessionId,
         query.requestId, 1010, { acceptedAt: 1010 })));
       transport.emitMessage(codec.encode(codec.createResult('m3', query.sessionId,
-        query.requestId, 1020, { summary: 'first result', sourceDeviceAlias: 'B', processingMs: 2 })));
+        query.requestId, 1020, { summary: 'first result', sourceDeviceAlias: '响应端设备', processingMs: 2 })));
       await pending;
 
       // Second request
@@ -387,9 +387,65 @@ export default function sessionManagerTest(): void {
       transport.emitMessage(codec.encode(codec.createAck('m5', query.sessionId,
         query.requestId, 2010, { acceptedAt: 2010 })));
       transport.emitMessage(codec.encode(codec.createResult('m6', query.sessionId,
-        query.requestId, 2020, { summary: 'second result', sourceDeviceAlias: 'B', processingMs: 1 })));
+        query.requestId, 2020, { summary: 'second result', sourceDeviceAlias: '响应端设备', processingMs: 1 })));
       const outcome: ResultPayload = await pending;
       expect(outcome.summary).assertEqual('second result');
+    });
+
+    it('canReconnectAfterDisconnect', 0, () => {
+      const transport = new FakeTransport();
+      const scheduler = new FakeScheduler();
+      const session = new SessionManager(
+        transport, new ProtocolCodec(), new SequenceIdGenerator(() => 5000),
+        scheduler, 3000, 10000
+      );
+      session.setObserver(new TestObserver());
+
+      session.connect(PEER).then(() => {
+        transport.emitConnected();
+        session.disconnect().then(() => {
+          expect(session.state).assertEqual(ConnectionState.DISCONNECTED);
+          session.connect(PEER).then(() => {
+            transport.emitConnected();
+            expect(session.state).assertEqual(ConnectionState.CONNECTED);
+            expect(transport.connectCalls).assertEqual(2);
+            expect(transport.disconnectCalls).assertEqual(1);
+          });
+        });
+      });
+    });
+
+    it('disconnectDoesNotDestroyTransport', 0, () => {
+      const transport = new FakeTransport();
+      const scheduler = new FakeScheduler();
+      const session = new SessionManager(
+        transport, new ProtocolCodec(), new SequenceIdGenerator(() => 5000),
+        scheduler, 3000, 10000
+      );
+      session.setObserver(new TestObserver());
+
+      session.connect(PEER).then(() => {
+        transport.emitConnected();
+        session.disconnect().then(() => {
+          expect(transport.destroyed).assertFalse();
+        });
+      });
+    });
+
+    it('destroyPreventsFurtherUse', 0, () => {
+      const transport = new FakeTransport();
+      const scheduler = new FakeScheduler();
+      const session = new SessionManager(
+        transport, new ProtocolCodec(), new SequenceIdGenerator(() => 5000),
+        scheduler, 3000, 10000
+      );
+      session.setObserver(new TestObserver());
+
+      session.destroy();
+      session.connect(PEER).catch((error: Object) => {
+        const appError = error as AppError;
+        expect(appError.code).assertEqual('E_SESSION_NOT_READY');
+      });
     });
   });
 }

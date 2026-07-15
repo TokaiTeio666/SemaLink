@@ -64,7 +64,7 @@ export default function protocolCodecTest(): void {
     it('acceptsMaxLengthSummary', 0, () => {
       const summary: string = 'x'.repeat(MAX_SUMMARY_CHARS);
       const resultPayload: ResultPayload = {
-        summary: summary, sourceDeviceAlias: 'B', processingMs: 5
+        summary: summary, sourceDeviceAlias: '响应端设备', processingMs: 5
       };
       const envelope: ProtocolEnvelope = codec.createResult('m1', 's1', 'r1', 1000, resultPayload);
       const decoded: ProtocolEnvelope = codec.decode(codec.encode(envelope));
@@ -76,7 +76,7 @@ export default function protocolCodecTest(): void {
       const summary: string = 'x'.repeat(MAX_SUMMARY_CHARS + 1);
       let code: string = '';
       const oversizeResultPayload: ResultPayload = {
-        summary: summary, sourceDeviceAlias: 'B', processingMs: 5
+        summary: summary, sourceDeviceAlias: '响应端设备', processingMs: 5
       };
       try {
         codec.createResult('m1', 's1', 'r1', 1000, oversizeResultPayload);
@@ -102,13 +102,13 @@ export default function protocolCodecTest(): void {
 
     it('roundTripsResult', 0, () => {
       const resultPayload: ResultPayload = {
-        summary: '摘要内容', sourceDeviceAlias: 'B', processingMs: 5
+        summary: '摘要内容', sourceDeviceAlias: '响应端设备', processingMs: 5
       };
       const envelope: ProtocolEnvelope = codec.createResult('m3', 's1', 'r1', 1020, resultPayload);
       const decoded: ProtocolEnvelope = codec.decode(codec.encode(envelope));
       const payload: ResultPayload = decoded.payload as ResultPayload;
       expect(payload.summary).assertEqual('摘要内容');
-      expect(payload.sourceDeviceAlias).assertEqual('B');
+      expect(payload.sourceDeviceAlias).assertEqual('响应端设备');
       expect(payload.processingMs).assertEqual(5);
     });
 

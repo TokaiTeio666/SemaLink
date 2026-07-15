@@ -1,4 +1,4 @@
-import { AppError } from '../../main/ets/common/AppError';
+import { AppError, ErrorStage } from '../../main/ets/common/AppError';
 import { PeerDevice } from '../../main/ets/model/AppModels';
 import { Transport, TransportListener } from '../../main/ets/communication/Transport';
 
@@ -7,6 +7,8 @@ export class FakeTransport implements Transport {
   public sentMessages: Array<string> = [];
   public connectCalls: number = 0;
   public disconnectCalls: number = 0;
+  public destroyed: boolean = false;
+  public peerDevice: PeerDevice | null = null;
   private connected: boolean = false;
 
   setListener(listener: TransportListener): void {
@@ -14,7 +16,11 @@ export class FakeTransport implements Transport {
   }
 
   async connect(peer: PeerDevice): Promise<void> {
+    if (this.destroyed) {
+      throw new AppError('E_TRANSPORT_DESTROYED', '传输组件已销毁', ErrorStage.CONNECTION, false);
+    }
     this.connectCalls += 1;
+    this.peerDevice = peer;
     this.connected = true;
   }
 
@@ -35,11 +41,16 @@ export class FakeTransport implements Transport {
   }
 
   destroy(): void {
+    this.destroyed = true;
     this.listener = null;
   }
 
   isConnected(): boolean {
     return this.connected;
+  }
+
+  getPeerDevice(): PeerDevice | null {
+    return this.peerDevice;
   }
 
   emitConnected(): void {

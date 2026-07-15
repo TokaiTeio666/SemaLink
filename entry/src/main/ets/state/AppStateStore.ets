@@ -31,6 +31,8 @@ export class AppStateStore {
       roundTripMs: next.roundTripMs ?? this.current.roundTripMs,
       bytesSent: next.bytesSent ?? this.current.bytesSent,
       bytesReceived: next.bytesReceived ?? this.current.bytesReceived,
+      peerDeviceName: next.peerDeviceName ?? this.current.peerDeviceName,
+      peerDeviceIdMasked: next.peerDeviceIdMasked ?? this.current.peerDeviceIdMasked,
       error: this.current.error
     };
     if (next.clearError === true) {

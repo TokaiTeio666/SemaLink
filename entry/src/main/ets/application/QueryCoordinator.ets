@@ -1,7 +1,7 @@
 import { AppError, ErrorStage } from '../common/AppError';
 import { SessionManager, SessionObserver } from '../communication/SessionManager';
 import { TrustedDeviceResolver } from '../communication/TrustedDeviceResolver';
-import { AppSnapshot, ConnectionState, DeviceRole, PeerDevice } from '../model/AppModels';
+import { AppSnapshot, ConnectionState, DeviceRole, PeerDevice, maskDeviceId } from '../model/AppModels';
 import { ProtocolEnvelope, QueryPayload, ResultPayload } from '../protocol/ProtocolModels';
 import { AppStateStore } from '../state/AppStateStore';
 import { MockSummaryService } from '../task/MockSummaryService';
@@ -40,6 +40,8 @@ export class QueryCoordinator implements SessionObserver {
       summary: '',
       requestId: '',
       roundTripMs: 0,
+      peerDeviceName: '',
+      peerDeviceIdMasked: '',
       clearError: true
     });
   }
@@ -60,6 +62,10 @@ export class QueryCoordinator implements SessionObserver {
     try {
       const resolver: TrustedDeviceResolver = this.resolverFactory();
       const peer: PeerDevice = await resolver.resolveUnique();
+      this.store.update({
+        peerDeviceName: peer.deviceName.length > 0 ? peer.deviceName : '远端设备',
+        peerDeviceIdMasked: maskDeviceId(peer.deviceId)
+      });
       await this.session.connect(peer);
     } catch (error) {
       const appError: AppError = this.asAppError(error as Object, ErrorStage.CONNECTION);
@@ -105,9 +111,20 @@ export class QueryCoordinator implements SessionObserver {
       summary: '',
       requestId: '',
       roundTripMs: 0,
+      peerDeviceName: '',
+      peerDeviceIdMasked: '',
       clearError: true
     });
     const accepted: boolean = this.session.accept(wantParam);
+    if (accepted) {
+      const peer: PeerDevice | null = this.session.getPeerDevice();
+      if (peer !== null) {
+        this.store.update({
+          peerDeviceName: peer.deviceName.length > 0 ? peer.deviceName : '远端设备',
+          peerDeviceIdMasked: maskDeviceId(peer.deviceId)
+        });
+      }
+    }
     if (!accepted) {
       this.publishFatalError(new AppError(
         'E_CONNECT_REJECTED', '协同连接参数无效', ErrorStage.CONNECTION, true
@@ -156,7 +173,7 @@ export class QueryCoordinator implements SessionObserver {
       const processingMs: number = Math.max(0, this.now() - startedAt);
       const result: ResultPayload = {
         summary: summary,
-        sourceDeviceAlias: 'B',
+        sourceDeviceAlias: '响应端设备',
         processingMs: processingMs
       };
       await this.session.sendResult(envelope, result);

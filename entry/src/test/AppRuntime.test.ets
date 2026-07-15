@@ -14,6 +14,10 @@ class CountingTransport implements Transport {
   disconnect(): Promise<void> { return Promise.resolve(); }
   destroy(): void { this.destroyCalls += 1; }
   isConnected(): boolean { return false; }
+
+  getPeerDevice(): PeerDevice | null {
+    return null;
+  }
 }
 
 interface FakeApplicationInfo {

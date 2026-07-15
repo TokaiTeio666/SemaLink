@@ -108,6 +108,14 @@ export class SessionManager implements TransportListener {
     return this.currentState;
   }
 
+  get activeRequestId(): string {
+    return this.pendingRequestId ?? '';
+  }
+
+  getPeerDevice(): PeerDevice | null {
+    return this.transport.getPeerDevice();
+  }
+
   setObserver(observer: SessionObserver): void {
     this.observer = observer;
   }
@@ -201,6 +209,9 @@ export class SessionManager implements TransportListener {
     this.lastCompleted = new CompletedResult(request.requestId, result);
     this.notifyMetrics(0, 0);
     await this.transport.send(text);
+    if (this.pendingRequestId === request.requestId) {
+      this.clearPending();
+    }
   }
 
   async sendRemoteError(request: ProtocolEnvelope, error: AppError): Promise<void> {
@@ -214,6 +225,9 @@ export class SessionManager implements TransportListener {
     this.bytesSent += bytes;
     this.notifyMetrics(0, 0);
     await this.transport.send(text);
+    if (this.pendingRequestId === request.requestId) {
+      this.clearPending();
+    }
   }
 
   async disconnect(): Promise<void> {

@@ -7,7 +7,7 @@ import { AvailableDeviceProvider, TrustedDeviceResolver } from
   '../main/ets/communication/TrustedDeviceResolver';
 import { SessionManager } from '../main/ets/communication/SessionManager';
 import { Transport, TransportListener } from '../main/ets/communication/Transport';
-import { AppSnapshot, ConnectionState, DeviceRole, PeerDevice } from '../main/ets/model/AppModels';
+import { AppSnapshot, ConnectionState, DeviceRole, maskDeviceId, PeerDevice } from '../main/ets/model/AppModels';
 import { ProtocolCodec } from '../main/ets/protocol/ProtocolCodec';
 import { ProtocolEnvelope, QueryPayload, ResultPayload } from '../main/ets/protocol/ProtocolModels';
 import { AppStateStore } from '../main/ets/state/AppStateStore';
@@ -19,9 +19,9 @@ const WANT_PARAM: Record<string, Object> = {};
 
 class FakeProvider implements AvailableDeviceProvider {
   released: boolean = false;
-  private readonly devices: Array<PeerDevice>;
+  devices: Array<PeerDevice> = [];
 
-  constructor(devices: Array<PeerDevice>) {
+  constructor(devices: Array<PeerDevice> = []) {
     this.devices = devices;
   }
 
@@ -70,6 +70,10 @@ class RecordingTransport implements Transport {
 
   isConnected(): boolean {
     return this.connectedPeerId.length > 0 && this.disconnectCalls === 0;
+  }
+
+  getPeerDevice(): PeerDevice | null {
+    return null;
   }
 
   emitConnected(): void {
@@ -195,7 +199,7 @@ export default function queryCoordinatorTest(): void {
       )));
       transport.emitMessage(codec.encode(codec.createResult(
         'm3', query.sessionId, query.requestId, 1042,
-        { summary: '摘要', sourceDeviceAlias: 'B', processingMs: 5 }
+        { summary: '摘要', sourceDeviceAlias: '响应端设备', processingMs: 5 }
       )));
       await pending;
 
@@ -263,6 +267,82 @@ export default function queryCoordinatorTest(): void {
       coordinator.destroy();
 
       expect(transport.destroyCalls).assertEqual(1);
+    });
+
+    it('reconnectSucceedsAfterManualDisconnect', 0, () => {
+      const transport = new RecordingTransport();
+      const scheduler = new FakeScheduler();
+      const session = new SessionManager(
+        transport, new ProtocolCodec(), new SequenceIdGenerator(() => 5000),
+        scheduler, 3000, 10000
+      );
+      const provider = new FakeProvider();
+      provider.devices = [PEER];
+      const resolverFactory = () => new TrustedDeviceResolver(provider);
+      const store = new AppStateStore();
+      const coordinator = new QueryCoordinator(
+        session, store, new MockSummaryService(), resolverFactory
+      );
+      coordinator.selectInitiator();
+      coordinator.connect().then(() => {
+        transport.emitConnected();
+        expect(store.snapshot().connectionState).assertEqual(ConnectionState.CONNECTED);
+        coordinator.disconnect().then(() => {
+          expect(store.snapshot().connectionState).assertEqual(ConnectionState.DISCONNECTED);
+          coordinator.connect().then(() => {
+            transport.emitConnected();
+            expect(store.snapshot().connectionState).assertEqual(ConnectionState.CONNECTED);
+          });
+        });
+      });
+    });
+
+    it('updatesRealPeerInformation', 0, () => {
+      const transport = new RecordingTransport();
+      const scheduler = new FakeScheduler();
+      const session = new SessionManager(
+        transport, new ProtocolCodec(), new SequenceIdGenerator(() => 5000),
+        scheduler, 3000, 10000
+      );
+      const provider = new FakeProvider();
+      const testPeer: PeerDevice = { deviceId: 'dev-abc-123', deviceName: 'TestPad', deviceType: 'tablet' };
+      provider.devices = [testPeer];
+      const resolverFactory = () => new TrustedDeviceResolver(provider);
+      const store = new AppStateStore();
+      const coordinator = new QueryCoordinator(
+        session, store, new MockSummaryService(), resolverFactory
+      );
+      coordinator.selectInitiator();
+      coordinator.connect().then(() => {
+        const snapshot = store.snapshot();
+        expect(snapshot.peerDeviceName).assertEqual('TestPad');
+        expect(snapshot.peerDeviceIdMasked).assertEqual(maskDeviceId('dev-abc-123'));
+        expect(snapshot.peerDeviceIdMasked.includes('dev-abc-123')).assertFalse();
+      });
+    });
+
+    it('doesNotConfusePeerWithLocalDevice', 0, () => {
+      const transport = new RecordingTransport();
+      const scheduler = new FakeScheduler();
+      const session = new SessionManager(
+        transport, new ProtocolCodec(), new SequenceIdGenerator(() => 5000),
+        scheduler, 3000, 10000
+      );
+      const provider = new FakeProvider();
+      const testPeer: PeerDevice = { deviceId: 'remote-123', deviceName: 'RemoteDevice', deviceType: 'phone' };
+      provider.devices = [testPeer];
+      const resolverFactory = () => new TrustedDeviceResolver(provider);
+      const store = new AppStateStore();
+      const coordinator = new QueryCoordinator(
+        session, store, new MockSummaryService(), resolverFactory
+      );
+      coordinator.selectInitiator();
+      coordinator.connect().then(() => {
+        const snapshot = store.snapshot();
+        expect(snapshot.peerDeviceName).assertEqual('RemoteDevice');
+        expect(snapshot.peerDeviceName === '设备 B').assertFalse();
+        expect(snapshot.peerDeviceName === '设备 A').assertFalse();
+      });
     });
   });
 }

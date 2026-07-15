@@ -16,4 +16,5 @@ export interface Transport {
   disconnect(): Promise<void>;
   destroy(): void;
   isConnected(): boolean;
+  getPeerDevice(): PeerDevice | null;
 }

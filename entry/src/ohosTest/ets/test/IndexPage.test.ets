@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@ohos/hypium';
-import { AppSnapshot, ConnectionState, DeviceRole, INITIAL_SNAPSHOT } from '../../../main/ets/model/AppModels';
+import { ConnectionState, DeviceRole, INITIAL_SNAPSHOT, cloneSnapshot, maskDeviceId } from '../../../main/ets/model/AppModels';
 import { canSubmit, isBusy, shouldShowConnect } from '../../../main/ets/pages/Index';
 
 export default function indexPageTest(): void {
@@ -10,9 +10,9 @@ export default function indexPageTest(): void {
     });
 
     it('showsConnectForInitiatorRecoveryStates', 0, () => {
-      const snapshot: AppSnapshot = { ...INITIAL_SNAPSHOT, role: DeviceRole.INITIATOR };
+      const snapshot = cloneSnapshot(INITIAL_SNAPSHOT, DeviceRole.INITIATOR);
       expect(shouldShowConnect(snapshot)).assertTrue();
-      expect(shouldShowConnect({ ...snapshot, connectionState: ConnectionState.ERROR })).assertTrue();
+      expect(shouldShowConnect(cloneSnapshot(snapshot, undefined, ConnectionState.ERROR))).assertTrue();
     });
 
     it('disablesActionsWhileBusy', 0, () => {
@@ -23,24 +23,31 @@ export default function indexPageTest(): void {
     });
 
     it('enablesOnlyValidConnectedQuestion', 0, () => {
-      const connected: AppSnapshot = {
-        ...INITIAL_SNAPSHOT,
-        role: DeviceRole.INITIATOR,
-        connectionState: ConnectionState.CONNECTED
-      };
+      const connected = cloneSnapshot(INITIAL_SNAPSHOT, DeviceRole.INITIATOR, ConnectionState.CONNECTED);
       expect(canSubmit(connected, '请总结文档')).assertTrue();
       expect(canSubmit(connected, '')).assertFalse();
-      expect(canSubmit({ ...connected, connectionState: ConnectionState.WAITING_RESULT }, '请总结文档'))
+      expect(canSubmit(cloneSnapshot(connected, undefined, ConnectionState.WAITING_RESULT), '请总结文档'))
         .assertFalse();
     });
 
     it('responderDoesNotSubmit', 0, () => {
-      const responder: AppSnapshot = {
-        ...INITIAL_SNAPSHOT,
-        role: DeviceRole.RESPONDER,
-        connectionState: ConnectionState.CONNECTED
-      };
+      const responder = cloneSnapshot(INITIAL_SNAPSHOT, DeviceRole.RESPONDER, ConnectionState.CONNECTED);
       expect(canSubmit(responder, 'remote question')).assertFalse();
+    });
+
+    it('cloneSnapshotPreservesPeerDeviceFields', 0, () => {
+      const base = cloneSnapshot(INITIAL_SNAPSHOT, DeviceRole.INITIATOR);
+      // cloneSnapshot should copy peerDeviceName and peerDeviceIdMasked from base
+      const cloned = cloneSnapshot(base, undefined, ConnectionState.CONNECTED);
+      expect(cloned.peerDeviceName).assertEqual(base.peerDeviceName);
+      expect(cloned.peerDeviceIdMasked).assertEqual(base.peerDeviceIdMasked);
+    });
+
+    it('maskDeviceIdDoesNotExposeFullId', 0, () => {
+      const fullId = '1234567890abcdef';
+      const masked = maskDeviceId(fullId);
+      expect(masked.includes(fullId)).assertFalse();
+      expect(masked.length > 0).assertTrue();
     });
   });
 }

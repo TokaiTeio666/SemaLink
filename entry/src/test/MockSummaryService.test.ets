@@ -14,5 +14,11 @@ export default function mockSummaryServiceTest(): void {
       expect(result).assertContain('未执行真实文档检索');
       expect(result).assertContain('未传输完整文件');
     });
+    it('doesNotContainHardcodedDeviceLabels', 0, () => {
+      const result: string = service.generate('测试问题');
+      expect(result.includes('设备 A')).assertFalse();
+      expect(result.includes('设备 B')).assertFalse();
+      expect(result.includes('响应端设备')).assertTrue();
+    });
   });
 }

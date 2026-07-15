@@ -1,6 +1,6 @@
 import { AppError } from '../common/AppError';
 import { AppRuntime } from '../runtime/AppRuntime';
-import { AppSnapshot, ConnectionState, DeviceRole, INITIAL_SNAPSHOT } from '../model/AppModels';
+import { AppSnapshot, ConnectionState, DeviceRole, INITIAL_SNAPSHOT, cloneSnapshot } from '../model/AppModels';
 
 export function isBusy(state: ConnectionState): boolean {
   return state === ConnectionState.CONNECTING || state === ConnectionState.SELECTING_DEVICE ||
@@ -77,6 +77,13 @@ struct Index {
         .fontColor(this.snapshot.connectionState === ConnectionState.ERROR ?
           $r('app.color.status_error') : $r('app.color.text_secondary'))
         .width('100%')
+      if (this.snapshot.peerDeviceName.length > 0) {
+        Text(this.snapshot.peerDeviceName + ' · ' + this.snapshot.peerDeviceIdMasked)
+          .id('peer-device-info')
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+      }
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
@@ -248,7 +255,7 @@ struct Index {
   private runCommand(command: () => Promise<void>): void {
     command().catch((error: Object) => {
       const appError: AppError = error as AppError;
-      this.snapshot = { ...this.snapshot, error: appError };
+      this.snapshot = cloneSnapshot(this.snapshot, undefined, undefined, appError);
     });
   }
 }

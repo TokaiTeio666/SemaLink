@@ -221,7 +221,8 @@ function createScaleCorpus(targetCount: number): BenchmarkCorpus {
     const document: KnowledgeDocument = {
       documentId: 'scale-doc-' + padded, title: '规模趋势文档 ' + padded, modality: 'text',
       normalizedText: text, tags: ['规模测试', '工程'], checksum: 'scale-' + padded,
-      createdAt: 1783958400000 + index, updatedAt: 1783958400000 + index
+      createdAt: 1783958400000 + index, updatedAt: 1783958400000 + index,
+      privacyLevel: 'PRIVATE_GROUP'
     };
     base.documents.push(document);
     const chunks: DocumentChunk[] = chunker.chunkDocument(document.documentId, text, document.updatedAt);

@@ -16,6 +16,13 @@ import userDocumentImportLogicTest from './UserDocumentImportLogic.test';
 import userDocumentStabilityTest from './UserDocumentStability.test';
 import localRetrievalBenchmarkTest from './LocalRetrievalBenchmark.test';
 import localRetrievalFullBenchmarkTest from './LocalRetrievalFullBenchmark.test';
+import semanticContractTest from './SemanticContract.test';
+import knowledgeDocumentPrivacyTest from './KnowledgeDocumentPrivacy.test';
+import knowledgeDatabaseMigrationTest from './KnowledgeDatabaseMigration.test';
+import knowledgeImportPrivacyTest from './KnowledgeImportPrivacy.test';
+import retrievalEngineTest from './RetrievalEngine.test';
+import evidenceUnitFactoryTest from './EvidenceUnitFactory.test';
+import rdbDocumentRepositoryContractTest from './RdbDocumentRepositoryContract.test';
 
 export default function testsuite(): void {
   commonModelsTest();
@@ -36,4 +43,11 @@ export default function testsuite(): void {
   userDocumentStabilityTest();
   localRetrievalBenchmarkTest();
   localRetrievalFullBenchmarkTest();
+  semanticContractTest();
+  knowledgeDocumentPrivacyTest();
+  knowledgeDatabaseMigrationTest();
+  knowledgeImportPrivacyTest();
+  retrievalEngineTest();
+  evidenceUnitFactoryTest();
+  rdbDocumentRepositoryContractTest();
 }

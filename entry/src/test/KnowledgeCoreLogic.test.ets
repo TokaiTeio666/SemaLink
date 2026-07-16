@@ -23,7 +23,8 @@ function document(id: string, title: string, tags: string[], text: string): Know
     tags: tags,
     checksum: 'sum-' + id,
     createdAt: 1,
-    updatedAt: 1
+    updatedAt: 1,
+    privacyLevel: 'PRIVATE_GROUP'
   };
 }
 

@@ -1,4 +1,5 @@
 import { KnowledgeModality } from '../../contracts/knowledge/KnowledgeModels';
+import { PrivacyLevel } from '../../contracts/semantic/SemanticModels';
 
 export interface KnowledgeDocument {
   documentId: string;
@@ -9,4 +10,5 @@ export interface KnowledgeDocument {
   checksum: string;
   createdAt: number;
   updatedAt: number;
+  privacyLevel: PrivacyLevel;
 }

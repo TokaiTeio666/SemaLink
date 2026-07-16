@@ -3,6 +3,26 @@ import { AppRuntime } from '../runtime/AppRuntime';
 import { AppSnapshot, ConnectionState, DeviceRole, INITIAL_SNAPSHOT, cloneSnapshot } from '../model/AppModels';
 import { DisplayKnowledgeItem } from '../application/KnowledgeQueryDisplayState';
 import { KnowledgePayloadLevel } from '../contracts/knowledge/KnowledgeModels';
+import { CollaborationRecord, CollaborationRecordStatus } from '../collaboration/CollaborationModels';
+import { CollaborationRecordList } from '../components/CollaborationRecordList';
+import { CollaborationRecordDetail } from '../components/CollaborationRecordDetail';
+
+/**
+ * Sentinel record used by the collaboration detail host when no record is currently selected.
+ * The detail component only reads record fields when hasRecord is true, so this sentinel merely
+ * satisfies the @Prop requirement that a value is present at construction time.
+ */
+const EMPTY_COLLABORATION_RECORD: CollaborationRecord = {
+  id: '',
+  question: '',
+  sourceDeviceName: '',
+  targetDeviceName: '',
+  createdAt: 0,
+  status: CollaborationRecordStatus.SENDING,
+  summary: '',
+  evidenceCount: 0,
+  errorMessage: ''
+};
 
 export function isBusy(state: ConnectionState): boolean {
   return state === ConnectionState.CONNECTING || state === ConnectionState.SELECTING_DEVICE ||
@@ -33,6 +53,7 @@ struct Index {
   @State question: string = '';
   @State localQuestion: string = '';
   @State knowledgeLevel: KnowledgePayloadLevel = 'L2';
+  @State collaborationBreakpoint: string = 'sm';
   private unsubscribe?: () => void;
 
   aboutToAppear(): void {
@@ -51,6 +72,7 @@ struct Index {
     Scroll() {
       Column({ space: 16 }) {
         this.header()
+        this.collaborationSection()
         this.knowledgeSection()
         this.roleSelector()
         this.connectionSection()
@@ -266,6 +288,56 @@ struct Index {
   }
 
   @Builder
+  collaborationSection() {
+    Column({ space: 12 }) {
+      Text($r('app.string.collaboration_records'))
+        .fontSize(19)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+
+      GridRow({ breakpoints: { value: ['600vp', '840vp'] } }) {
+        GridCol({ span: { sm: 12, md: 6, lg: 6 } }) {
+          if (this.showCollaborationList()) {
+            CollaborationRecordList({
+              records: this.snapshot.collaborationRecords,
+              selectedId: this.snapshot.selectedCollaborationRecordId,
+              onSelected: (id: string) => {
+                AppRuntime.current().coordinator.selectCollaborationRecord(id);
+              }
+            })
+          }
+        }
+
+        GridCol({ span: { sm: 12, md: 6, lg: 6 } }) {
+          if (this.showCollaborationDetail()) {
+            CollaborationRecordDetail({
+              record: this.findSelectedRecord(),
+              hasRecord: this.hasSelectedRecord(),
+              onContinue: (id: string) => {
+                AppRuntime.current().coordinator.prepareFollowUp(id);
+              },
+              onRetry: (id: string) => {
+                this.retryCollaborationQuery(id);
+              },
+              onBack: () => {
+                this.backToCollaborationList();
+              }
+            })
+          }
+        }
+      }
+      .onBreakpointChange((bp: string) => {
+        this.collaborationBreakpoint = bp;
+      })
+      .width('100%')
+    }
+    .id('collaboration-section')
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+  }
+
+  @Builder
   roleSelector() {
     Column({ space: 8 }) {
       Text($r('app.string.role_label')).fontSize(14).fontColor($r('app.color.text_secondary'))
@@ -416,6 +488,66 @@ struct Index {
         .fontColor($r('app.color.text_primary'))
         .onClick(() => this.runCommand(() => AppRuntime.current().coordinator.disconnect()))
     }
+  }
+
+  private findSelectedRecord(): CollaborationRecord {
+    const records: Array<CollaborationRecord> = this.snapshot.collaborationRecords;
+    const selectedId: string = this.snapshot.selectedCollaborationRecordId;
+    for (let i = 0; i < records.length; i++) {
+      if (records[i].id === selectedId) {
+        return records[i];
+      }
+    }
+    return EMPTY_COLLABORATION_RECORD;
+  }
+
+  private hasSelectedRecord(): boolean {
+    return this.snapshot.selectedCollaborationRecordId.length > 0;
+  }
+
+  private isWideLayout(): boolean {
+    return this.collaborationBreakpoint === 'md' ||
+      this.collaborationBreakpoint === 'lg' ||
+      this.collaborationBreakpoint === 'xl' ||
+      this.collaborationBreakpoint === 'xxl';
+  }
+
+  private showCollaborationList(): boolean {
+    // On wide layouts the list is always rendered alongside the detail.
+    // On phone widths the list renders only until a record is selected.
+    return this.isWideLayout() || !this.hasSelectedRecord();
+  }
+
+  private showCollaborationDetail(): boolean {
+    // On wide layouts the detail (or placeholder) is always rendered next to the list.
+    // On phone widths the detail renders only when a record is selected.
+    return this.isWideLayout() || this.hasSelectedRecord();
+  }
+
+  private retryCollaborationQuery(id: string): void {
+    // Locate the record's question without relying on the currently edited question input.
+    const records: Array<CollaborationRecord> = this.snapshot.collaborationRecords;
+    let question: string = '';
+    for (let i = 0; i < records.length; i++) {
+      if (records[i].id === id) {
+        question = records[i].question;
+        break;
+      }
+    }
+    if (question.length === 0) {
+      return;
+    }
+    // Restore the question and clear summary/error before submitting through the existing path.
+    if (!AppRuntime.current().coordinator.prepareFollowUp(id)) {
+      return;
+    }
+    // Submit through the existing initiator/connection validation and submit path.
+    this.runCommand(() => AppRuntime.current().coordinator.submit(question.trim()));
+  }
+
+  private backToCollaborationList(): void {
+    // Clear the selection so phone-width layouts return to the list view.
+    AppRuntime.current().store.update({ selectedCollaborationRecordId: '' });
   }
 
   private connectionLabel(): Resource {

@@ -1,6 +1,8 @@
 import { AppError } from '../common/AppError';
 import { AppRuntime } from '../runtime/AppRuntime';
 import { AppSnapshot, ConnectionState, DeviceRole, INITIAL_SNAPSHOT, cloneSnapshot } from '../model/AppModels';
+import { DisplayKnowledgeItem } from '../application/KnowledgeQueryDisplayState';
+import { KnowledgePayloadLevel } from '../contracts/knowledge/KnowledgeModels';
 
 export function isBusy(state: ConnectionState): boolean {
   return state === ConnectionState.CONNECTING || state === ConnectionState.SELECTING_DEVICE ||
@@ -19,11 +21,18 @@ export function shouldShowConnect(snapshot: AppSnapshot): boolean {
       snapshot.connectionState === ConnectionState.ERROR);
 }
 
+export function canQueryKnowledge(snapshot: AppSnapshot, question: string): boolean {
+  return snapshot.knowledgeInitialized && !snapshot.knowledgeBusy && snapshot.knowledgeIndexState === 'READY' &&
+    question.trim().length >= 1 && question.length <= 1000;
+}
+
 @Entry
 @Component
 struct Index {
   @State snapshot: AppSnapshot = INITIAL_SNAPSHOT;
   @State question: string = '';
+  @State localQuestion: string = '';
+  @State knowledgeLevel: KnowledgePayloadLevel = 'L2';
   private unsubscribe?: () => void;
 
   aboutToAppear(): void {
@@ -42,6 +51,7 @@ struct Index {
     Scroll() {
       Column({ space: 16 }) {
         this.header()
+        this.knowledgeSection()
         this.roleSelector()
         this.connectionSection()
         if (this.snapshot.role === DeviceRole.RESPONDER) {
@@ -61,6 +71,172 @@ struct Index {
     .height('100%')
     .backgroundColor($r('app.color.page_background'))
     .scrollBar(BarState.Off)
+  }
+
+  @Builder
+  knowledgeSection() {
+    Column({ space: 12 }) {
+      Row() {
+        Column({ space: 3 }) {
+          Text('本机知识库')
+            .fontSize(19)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+          Text(this.snapshot.knowledgeMessage)
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+        Text(this.snapshot.knowledgeIndexState)
+          .fontSize(12)
+          .fontColor(this.snapshot.knowledgeIndexState === 'READY' ?
+            $r('app.color.status_success') : $r('app.color.text_secondary'))
+      }
+      .width('100%')
+
+      Row({ space: 8 }) {
+        Column({ space: 4 }) {
+          Text('文档').fontSize(12).fontColor($r('app.color.text_secondary'))
+          Text(this.snapshot.knowledgeDocumentCount.toString())
+            .id('knowledge-document-count')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        .padding(12)
+        .backgroundColor($r('app.color.surface'))
+        Column({ space: 4 }) {
+          Text('分块').fontSize(12).fontColor($r('app.color.text_secondary'))
+          Text(this.snapshot.knowledgeChunkCount.toString())
+            .id('knowledge-chunk-count')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        .padding(12)
+        .backgroundColor($r('app.color.surface'))
+      }
+      .width('100%')
+
+      if (this.snapshot.knowledgeBusy) {
+        Row({ space: 10 }) {
+          Progress({ value: 0 }).width(22).height(22)
+          Text('正在处理...').fontColor($r('app.color.text_secondary'))
+        }
+        .width('100%')
+      }
+
+      Row({ space: 8 }) {
+        Button('L1 摘要')
+          .layoutWeight(1)
+          .backgroundColor(this.knowledgeLevel === 'L1' ? $r('app.color.accent') : $r('app.color.surface_muted'))
+          .fontColor(this.knowledgeLevel === 'L1' ? Color.White : $r('app.color.text_primary'))
+          .onClick(() => this.knowledgeLevel = 'L1')
+        Button('L2 段落')
+          .layoutWeight(1)
+          .backgroundColor(this.knowledgeLevel === 'L2' ? $r('app.color.accent') : $r('app.color.surface_muted'))
+          .fontColor(this.knowledgeLevel === 'L2' ? Color.White : $r('app.color.text_primary'))
+          .onClick(() => this.knowledgeLevel = 'L2')
+      }
+      .width('100%')
+
+      TextArea({ placeholder: '输入要在本机知识库检索的问题', text: this.localQuestion })
+        .id('local-knowledge-input')
+        .height(96)
+        .enabled(this.snapshot.knowledgeInitialized && !this.snapshot.knowledgeBusy)
+        .maxLength(1000)
+        .onChange((value: string) => this.localQuestion = value)
+      Button('查询本机知识库')
+        .id('local-knowledge-query')
+        .width('100%')
+        .enabled(canQueryKnowledge(this.snapshot, this.localQuestion))
+        .onClick(() => this.runKnowledgeCommand(() =>
+          AppRuntime.current().queryLocalKnowledge(this.localQuestion.trim(), this.knowledgeLevel)))
+
+      Row({ space: 8 }) {
+        Button('导入内置文档')
+          .layoutWeight(1)
+          .fontSize(13)
+          .enabled(this.snapshot.knowledgeInitialized && !this.snapshot.knowledgeBusy)
+          .backgroundColor($r('app.color.surface_muted'))
+          .fontColor($r('app.color.text_primary'))
+          .onClick(() => this.runKnowledgeCommand(() => AppRuntime.current().importBuiltInKnowledge()))
+        Button('选择文本文件')
+          .layoutWeight(1)
+          .fontSize(13)
+          .enabled(this.snapshot.knowledgeInitialized && !this.snapshot.knowledgeBusy)
+          .backgroundColor($r('app.color.surface_muted'))
+          .fontColor($r('app.color.text_primary'))
+          .onClick(() => this.runKnowledgeCommand(() => AppRuntime.current().importUserKnowledge()))
+      }
+      .width('100%')
+
+      if (this.snapshot.knowledgeDocumentCount > 0) {
+        Button('清空知识库')
+          .width('100%')
+          .enabled(!this.snapshot.knowledgeBusy)
+          .backgroundColor($r('app.color.surface_muted'))
+          .fontColor($r('app.color.status_error'))
+          .onClick(() => this.confirmClearKnowledge())
+      }
+
+      if (this.snapshot.knowledgeError.length > 0) {
+        Text(this.snapshot.knowledgeError)
+          .fontSize(13)
+          .fontColor($r('app.color.status_error'))
+          .width('100%')
+      }
+
+      if (this.snapshot.knowledgeQueryStatus === 'EMPTY') {
+        Text('没有找到相关内容')
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+      }
+
+      ForEach(this.snapshot.knowledgeItems, (item: DisplayKnowledgeItem, index: number) => {
+        this.knowledgeResultItem(item, index)
+      }, (item: DisplayKnowledgeItem, index: number) => item.title + index.toString())
+    }
+    .id('knowledge-section')
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding(16)
+    .backgroundColor($r('app.color.surface'))
+  }
+
+  @Builder
+  knowledgeResultItem(item: DisplayKnowledgeItem, index: number) {
+    Column({ space: 6 }) {
+      Row({ space: 8 }) {
+        Text(item.title)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .layoutWeight(1)
+        Text((item.relevance * 100).toFixed(0) + '%')
+          .fontSize(12)
+          .fontColor($r('app.color.accent'))
+      }
+      .width('100%')
+      Text(item.kind + (item.chunkLabel.length > 0 ? ' · ' + item.chunkLabel : ''))
+        .fontSize(11)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+      Text(item.content)
+        .fontSize(14)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+    }
+    .id('knowledge-result-' + index.toString())
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding(12)
+    .backgroundColor($r('app.color.surface_muted'))
   }
 
   @Builder
@@ -196,7 +372,7 @@ struct Index {
   }
 
   @Builder
-  metric(label: Resource, value: string, id: string) {
+  metric(label: Resource | string, value: string, id: string) {
     Column({ space: 4 }) {
       Text(label).fontSize(12).fontColor($r('app.color.text_secondary'))
       Text(value).id(id).fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
@@ -256,6 +432,28 @@ struct Index {
     command().catch((error: Object) => {
       const appError: AppError = error as AppError;
       this.snapshot = cloneSnapshot(this.snapshot, undefined, undefined, appError);
+    });
+  }
+
+  private runKnowledgeCommand(command: () => Promise<void>): void {
+    command().catch((_error: Object) => {
+      // AppRuntime publishes knowledge errors through AppStateStore.
+    });
+  }
+
+  private confirmClearKnowledge(): void {
+    AlertDialog.show({
+      title: '清空知识库',
+      message: '已导入的内置文档和用户文档都会被删除。',
+      primaryButton: {
+        value: '取消',
+        action: () => {}
+      },
+      secondaryButton: {
+        value: '清空',
+        fontColor: $r('app.color.status_error'),
+        action: () => this.runKnowledgeCommand(() => AppRuntime.current().clearKnowledge())
+      }
     });
   }
 }

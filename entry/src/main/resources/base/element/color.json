@@ -13,6 +13,10 @@
       "value": "#FFFFFF"
     },
     {
+      "name": "surface_muted",
+      "value": "#EEF2F6"
+    },
+    {
       "name": "accent",
       "value": "#1769AA"
     },
@@ -27,6 +31,10 @@
     {
       "name": "status_error",
       "value": "#C62828"
+    },
+    {
+      "name": "status_success",
+      "value": "#18794E"
     },
     {
       "name": "error_surface",

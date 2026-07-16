@@ -26,7 +26,10 @@ export default class EntryAbility extends UIAbility {
     }
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
 
-    AppRuntime.initialize(this.context);
+    const runtime: AppRuntime = AppRuntime.initialize(this.context);
+    runtime.initializeKnowledge(this.context).catch((error: Object) => {
+      hilog.error(DOMAIN, 'testTag', 'Knowledge initialization failed. Cause: %{public}s', JSON.stringify(error));
+    });
   }
 
   onCollaborate(wantParam: Record<string, Object>): AbilityConstant.CollaborateResult {

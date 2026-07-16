@@ -33,6 +33,18 @@ export class AppStateStore {
       bytesReceived: next.bytesReceived ?? this.current.bytesReceived,
       peerDeviceName: next.peerDeviceName ?? this.current.peerDeviceName,
       peerDeviceIdMasked: next.peerDeviceIdMasked ?? this.current.peerDeviceIdMasked,
+      knowledgeInitialized: next.knowledgeInitialized ?? this.current.knowledgeInitialized,
+      knowledgeBusy: next.knowledgeBusy ?? this.current.knowledgeBusy,
+      knowledgeIndexState: next.knowledgeIndexState ?? this.current.knowledgeIndexState,
+      knowledgeDocumentCount: next.knowledgeDocumentCount ?? this.current.knowledgeDocumentCount,
+      knowledgeChunkCount: next.knowledgeChunkCount ?? this.current.knowledgeChunkCount,
+      knowledgeMessage: next.knowledgeMessage ?? this.current.knowledgeMessage,
+      knowledgeQueryStatus: next.knowledgeQueryStatus ?? this.current.knowledgeQueryStatus,
+      knowledgeLevel: next.knowledgeLevel ?? this.current.knowledgeLevel,
+      knowledgeItems: next.knowledgeItems ?? this.current.knowledgeItems,
+      knowledgeRetrievalMs: next.knowledgeRetrievalMs ?? this.current.knowledgeRetrievalMs,
+      knowledgeTruncated: next.knowledgeTruncated ?? this.current.knowledgeTruncated,
+      knowledgeError: next.knowledgeError ?? this.current.knowledgeError,
       error: this.current.error
     };
     if (next.clearError === true) {

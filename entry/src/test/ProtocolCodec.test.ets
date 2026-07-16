@@ -2,6 +2,8 @@ import { describe, expect, it } from '@ohos/hypium';
 import { ProtocolCodec } from '../main/ets/protocol/ProtocolCodec';
 import { MessageType, ProtocolEnvelope, QueryPayload, ResultPayload, ErrorPayload, QueryAckPayload, MAX_QUESTION_CHARS, MAX_SUMMARY_CHARS, MAX_MESSAGE_BYTES } from '../main/ets/protocol/ProtocolModels';
 import { AppError } from '../main/ets/common/AppError';
+import { L2KnowledgePayload } from '../main/ets/contracts/knowledge/KnowledgePayloadSchemas';
+import { LocalKnowledgeResult } from '../main/ets/contracts/knowledge/KnowledgeModels';
 
 export default function protocolCodecTest(): void {
   describe('ProtocolCodec', () => {
@@ -110,6 +112,30 @@ export default function protocolCodecTest(): void {
       expect(payload.summary).assertEqual('摘要内容');
       expect(payload.sourceDeviceAlias).assertEqual('响应端设备');
       expect(payload.processingMs).assertEqual(5);
+    });
+
+    it('roundTripsKnowledgeResult', 0, () => {
+      const knowledgePayload: L2KnowledgePayload = {
+        schemaVersion: '1.0', level: 'L2',
+        items: [{
+          evidenceId: 'ev-1', documentId: 'doc-1', chunkId: 'chunk-1', title: '测试文档',
+          snippet: '知识检索内容', relevance: 0.9, truncated: false
+        }]
+      };
+      const knowledgeResult: LocalKnowledgeResult = {
+        contractVersion: '1.0', requestId: 'r1', level: 'L2', itemCount: 1,
+        payloadJson: JSON.stringify(knowledgePayload), truncated: false, retrievalMs: 3,
+        indexVersion: 'index-1', generatedAt: 1000
+      };
+      const resultPayload: ResultPayload = {
+        summary: '命中 1 条', sourceDeviceAlias: '响应端设备', processingMs: 5,
+        resultType: 'KNOWLEDGE', knowledgeResult: knowledgeResult
+      };
+      const envelope: ProtocolEnvelope = codec.createResult('m3', 's1', 'r1', 1020, resultPayload);
+      const decoded: ResultPayload = codec.decode(codec.encode(envelope)).payload as ResultPayload;
+      expect(decoded.resultType).assertEqual('KNOWLEDGE');
+      expect(decoded.knowledgeResult?.itemCount).assertEqual(1);
+      expect(decoded.knowledgeResult?.payloadJson).assertEqual(knowledgeResult.payloadJson);
     });
 
     it('roundTripsError', 0, () => {

@@ -3,6 +3,14 @@
     {
       "name": "start_window_background",
       "value": "#000000"
+    },
+    {
+      "name": "surface_muted",
+      "value": "#252B33"
+    },
+    {
+      "name": "status_success",
+      "value": "#5BC98C"
     }
   ]
 }

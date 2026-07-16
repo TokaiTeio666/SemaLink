@@ -4,6 +4,7 @@ import {
   ResultPayload, ErrorPayload, PROTOCOL_VERSION, MAX_MESSAGE_BYTES, MAX_QUESTION_CHARS,
   MAX_SUMMARY_CHARS
 } from './ProtocolModels';
+import { LocalKnowledgeResult } from '../contracts/knowledge/KnowledgeModels';
 
 const VALID_MESSAGE_TYPES: string[] = ['QUERY', 'QUERY_ACK', 'RESULT', 'ERROR'];
 
@@ -161,6 +162,15 @@ export class ProtocolCodec {
           sourceDeviceAlias: raw['sourceDeviceAlias'] as string,
           processingMs: raw['processingMs'] as number
         };
+        if (raw['resultType'] !== undefined) {
+          if (raw['resultType'] !== 'SUMMARY' && raw['resultType'] !== 'KNOWLEDGE') {
+            throw new AppError('E_PROTOCOL_INVALID', 'resultType is invalid', ErrorStage.PROTOCOL, false);
+          }
+          resultPayload.resultType = raw['resultType'] as 'SUMMARY' | 'KNOWLEDGE';
+        }
+        if (resultPayload.resultType === 'KNOWLEDGE') {
+          resultPayload.knowledgeResult = this.validateKnowledgeResult(raw['knowledgeResult']);
+        }
         return resultPayload;
       }
       case MessageType.ERROR: {
@@ -206,6 +216,10 @@ export class ProtocolCodec {
     if (payload.summary.length === 0 || payload.summary.length > MAX_SUMMARY_CHARS) {
       throw new AppError('E_QUERY_INVALID', '摘要长度无效', ErrorStage.QUERY, true);
     }
+    if (payload.resultType === 'KNOWLEDGE' &&
+      (payload.knowledgeResult === undefined || payload.knowledgeResult.requestId !== requestId)) {
+      throw new AppError('E_QUERY_INVALID', 'Knowledge result does not match request', ErrorStage.QUERY, true);
+    }
     return {
       version: PROTOCOL_VERSION, type: MessageType.RESULT, messageId: messageId, sessionId: sessionId,
       requestId: requestId, sentAt: sentAt, payload: payload
@@ -217,6 +231,36 @@ export class ProtocolCodec {
     return {
       version: PROTOCOL_VERSION, type: MessageType.ERROR, messageId: messageId, sessionId: sessionId,
       requestId: requestId, sentAt: sentAt, payload: payload
+    };
+  }
+
+  private validateKnowledgeResult(value: Object | undefined): LocalKnowledgeResult {
+    if (value === undefined || typeof value !== 'object' || value === null || Array.isArray(value)) {
+      throw new AppError('E_PROTOCOL_INVALID', 'knowledgeResult is invalid', ErrorStage.PROTOCOL, false);
+    }
+    const raw: Record<string, Object> = value as Record<string, Object>;
+    if (raw['contractVersion'] !== '1.0' || typeof raw['requestId'] !== 'string' ||
+      (raw['level'] !== 'L1' && raw['level'] !== 'L2') || typeof raw['itemCount'] !== 'number' ||
+      typeof raw['payloadJson'] !== 'string' || typeof raw['truncated'] !== 'boolean' ||
+      typeof raw['retrievalMs'] !== 'number' || typeof raw['indexVersion'] !== 'string' ||
+      typeof raw['generatedAt'] !== 'number') {
+      throw new AppError('E_PROTOCOL_INVALID', 'knowledgeResult content is invalid', ErrorStage.PROTOCOL, false);
+    }
+    try {
+      JSON.parse(raw['payloadJson'] as string);
+    } catch (_error) {
+      throw new AppError('E_PROTOCOL_INVALID', 'knowledgeResult payloadJson is invalid', ErrorStage.PROTOCOL, false);
+    }
+    return {
+      contractVersion: '1.0',
+      requestId: raw['requestId'] as string,
+      level: raw['level'] as 'L1' | 'L2',
+      itemCount: raw['itemCount'] as number,
+      payloadJson: raw['payloadJson'] as string,
+      truncated: raw['truncated'] as boolean,
+      retrievalMs: raw['retrievalMs'] as number,
+      indexVersion: raw['indexVersion'] as string,
+      generatedAt: raw['generatedAt'] as number
     };
   }
 }

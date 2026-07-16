@@ -4,7 +4,11 @@ import { TrustedDeviceResolver } from '../communication/TrustedDeviceResolver';
 import { AppSnapshot, ConnectionState, DeviceRole, PeerDevice, maskDeviceId } from '../model/AppModels';
 import { ProtocolEnvelope, QueryPayload, ResultPayload } from '../protocol/ProtocolModels';
 import { AppStateStore } from '../state/AppStateStore';
-import { MockSummaryService } from '../task/MockSummaryService';
+import { KnowledgeError } from '../contracts/knowledge/KnowledgeError';
+import { LocalKnowledgeGateway } from '../contracts/knowledge/LocalKnowledgeGateway';
+import { LocalKnowledgeQuery, LocalKnowledgeResult } from '../contracts/knowledge/KnowledgeModels';
+import { KnowledgePayloadValidator } from '../contracts/knowledge/KnowledgePayloadValidator';
+import { publishKnowledgeResult, resultSummary } from './KnowledgeResultMapper';
 
 export type ResolverFactory = () => TrustedDeviceResolver;
 export type Clock = () => number;
@@ -12,7 +16,7 @@ export type Clock = () => number;
 export class QueryCoordinator implements SessionObserver {
   private readonly session: SessionManager;
   private readonly store: AppStateStore;
-  private readonly summaryService: MockSummaryService;
+  private readonly knowledgeGateway: LocalKnowledgeGateway;
   private readonly resolverFactory: ResolverFactory;
   private readonly now: Clock;
   private destroyed: boolean = false;
@@ -20,13 +24,13 @@ export class QueryCoordinator implements SessionObserver {
   constructor(
     session: SessionManager,
     store: AppStateStore,
-    summaryService: MockSummaryService,
+    knowledgeGateway: LocalKnowledgeGateway,
     resolverFactory: ResolverFactory,
     now: Clock = () => Date.now()
   ) {
     this.session = session;
     this.store = store;
-    this.summaryService = summaryService;
+    this.knowledgeGateway = knowledgeGateway;
     this.resolverFactory = resolverFactory;
     this.now = now;
     this.session.setObserver(this);
@@ -87,8 +91,17 @@ export class QueryCoordinator implements SessionObserver {
         clearError: true
       });
       const result: ResultPayload = await pending;
+      if (result.resultType === 'KNOWLEDGE' && result.knowledgeResult !== undefined) {
+        const validationRequest: LocalKnowledgeQuery = {
+          contractVersion: '1.0', requestId: requestId, queryText: question, topK: 5,
+          requestedLevel: 'L2', maxPayloadBytes: 8192
+        };
+        new KnowledgePayloadValidator().validateResult(validationRequest, result.knowledgeResult);
+        publishKnowledgeResult(this.store, result.knowledgeResult);
+      } else {
+        this.store.update({ summary: result.summary });
+      }
       this.store.update({
-        summary: result.summary,
         requestId: requestId,
         roundTripMs: Math.max(0, this.now() - startedAt),
         clearError: true
@@ -169,20 +182,26 @@ export class QueryCoordinator implements SessionObserver {
 
     try {
       await this.session.sendAck(envelope);
-      const summary: string = this.summaryService.generate(payload.question);
+      const request: LocalKnowledgeQuery = {
+        contractVersion: '1.0',
+        requestId: envelope.requestId,
+        queryText: payload.question,
+        topK: 5,
+        requestedLevel: 'L2',
+        maxPayloadBytes: 8192
+      };
+      const knowledgeResult: LocalKnowledgeResult = await this.knowledgeGateway.query(request);
       const processingMs: number = Math.max(0, this.now() - startedAt);
       const result: ResultPayload = {
-        summary: summary,
+        summary: resultSummary(knowledgeResult),
         sourceDeviceAlias: '响应端设备',
-        processingMs: processingMs
+        processingMs: processingMs,
+        resultType: 'KNOWLEDGE',
+        knowledgeResult: knowledgeResult
       };
       await this.session.sendResult(envelope, result);
-      this.store.update({
-        summary: summary,
-        requestId: envelope.requestId,
-        roundTripMs: processingMs,
-        clearError: true
-      });
+      publishKnowledgeResult(this.store, knowledgeResult);
+      this.store.update({ requestId: envelope.requestId, roundTripMs: processingMs, clearError: true });
     } catch (error) {
       const appError: AppError = this.asAppError(error as Object, ErrorStage.QUERY);
       try {
@@ -212,6 +231,9 @@ export class QueryCoordinator implements SessionObserver {
   private asAppError(error: Object, stage: ErrorStage): AppError {
     if (error instanceof AppError) {
       return error;
+    }
+    if (error instanceof KnowledgeError) {
+      return new AppError(error.code, error.message, stage, error.recoverable);
     }
     return new AppError('E_COORDINATOR', '操作失败', stage, true);
   }

@@ -1,4 +1,6 @@
 import { AppError } from '../common/AppError';
+import { DisplayKnowledgeItem, KnowledgeQueryDisplayStatus } from '../application/KnowledgeQueryDisplayState';
+import { KnowledgeIndexState, KnowledgePayloadLevel } from '../contracts/knowledge/KnowledgeModels';
 
 export enum DeviceRole {
   UNSELECTED = 'UNSELECTED',
@@ -35,6 +37,18 @@ export interface AppSnapshot {
   bytesReceived: number;
   peerDeviceName: string;
   peerDeviceIdMasked: string;
+  knowledgeInitialized: boolean;
+  knowledgeBusy: boolean;
+  knowledgeIndexState: KnowledgeIndexState;
+  knowledgeDocumentCount: number;
+  knowledgeChunkCount: number;
+  knowledgeMessage: string;
+  knowledgeQueryStatus: KnowledgeQueryDisplayStatus;
+  knowledgeLevel: KnowledgePayloadLevel;
+  knowledgeItems: DisplayKnowledgeItem[];
+  knowledgeRetrievalMs: number;
+  knowledgeTruncated: boolean;
+  knowledgeError: string;
   error?: AppError;
 }
 
@@ -48,7 +62,19 @@ export const INITIAL_SNAPSHOT: AppSnapshot = {
   bytesSent: 0,
   bytesReceived: 0,
   peerDeviceName: '',
-  peerDeviceIdMasked: ''
+  peerDeviceIdMasked: '',
+  knowledgeInitialized: false,
+  knowledgeBusy: false,
+  knowledgeIndexState: 'EMPTY',
+  knowledgeDocumentCount: 0,
+  knowledgeChunkCount: 0,
+  knowledgeMessage: '正在初始化知识库',
+  knowledgeQueryStatus: 'IDLE',
+  knowledgeLevel: 'L2',
+  knowledgeItems: [],
+  knowledgeRetrievalMs: 0,
+  knowledgeTruncated: false,
+  knowledgeError: ''
 };
 
 export function cloneSnapshot(
@@ -68,6 +94,18 @@ export function cloneSnapshot(
     bytesReceived: base.bytesReceived,
     peerDeviceName: base.peerDeviceName,
     peerDeviceIdMasked: base.peerDeviceIdMasked,
+    knowledgeInitialized: base.knowledgeInitialized,
+    knowledgeBusy: base.knowledgeBusy,
+    knowledgeIndexState: base.knowledgeIndexState,
+    knowledgeDocumentCount: base.knowledgeDocumentCount,
+    knowledgeChunkCount: base.knowledgeChunkCount,
+    knowledgeMessage: base.knowledgeMessage,
+    knowledgeQueryStatus: base.knowledgeQueryStatus,
+    knowledgeLevel: base.knowledgeLevel,
+    knowledgeItems: base.knowledgeItems,
+    knowledgeRetrievalMs: base.knowledgeRetrievalMs,
+    knowledgeTruncated: base.knowledgeTruncated,
+    knowledgeError: base.knowledgeError,
     error: error ?? base.error
   };
 }

@@ -11,11 +11,46 @@ import { AppSnapshot, ConnectionState, DeviceRole, maskDeviceId, PeerDevice } fr
 import { ProtocolCodec } from '../main/ets/protocol/ProtocolCodec';
 import { ProtocolEnvelope, QueryPayload, ResultPayload } from '../main/ets/protocol/ProtocolModels';
 import { AppStateStore } from '../main/ets/state/AppStateStore';
-import { MockSummaryService } from '../main/ets/task/MockSummaryService';
 import { FakeScheduler } from './support/FakeScheduler';
+import { LocalKnowledgeGateway } from '../main/ets/contracts/knowledge/LocalKnowledgeGateway';
+import {
+  KnowledgeProfile,
+  LocalKnowledgeQuery,
+  LocalKnowledgeResult
+} from '../main/ets/contracts/knowledge/KnowledgeModels';
+import { L2KnowledgePayload } from '../main/ets/contracts/knowledge/KnowledgePayloadSchemas';
 
 const PEER: PeerDevice = { deviceId: 'd1', deviceName: 'MatePad', deviceType: 'tablet' };
 const WANT_PARAM: Record<string, Object> = {};
+
+class FakeKnowledgeGateway implements LocalKnowledgeGateway {
+  query(request: LocalKnowledgeQuery): Promise<LocalKnowledgeResult> {
+    const payload: L2KnowledgePayload = {
+      schemaVersion: '1.0',
+      level: 'L2',
+      items: [{
+        evidenceId: 'ev-1', documentId: 'doc-1', chunkId: 'chunk-1', title: '项目资料',
+        snippet: '项目状态与计划', relevance: 0.9, truncated: false
+      }]
+    };
+    const result: LocalKnowledgeResult = {
+      contractVersion: '1.0', requestId: request.requestId, level: 'L2', itemCount: 1,
+      payloadJson: JSON.stringify(payload), truncated: false, retrievalMs: 2,
+      indexVersion: 'index-test', generatedAt: 1000
+    };
+    return Promise.resolve(result);
+  }
+
+  getKnowledgeProfile(): Promise<KnowledgeProfile> {
+    const profile: KnowledgeProfile = {
+      contractVersion: '1.0', profileVersion: 'profile-test', indexState: 'READY',
+      knowledgeDomains: [], documentCount: 1, chunkCount: 1, modalities: ['text'],
+      retrievalModes: ['keyword'], supportedLevels: ['L1', 'L2'], indexVersion: 'index-test',
+      embeddingModelVersion: '', updatedAt: 1000
+    };
+    return Promise.resolve(profile);
+  }
+}
 
 class FakeProvider implements AvailableDeviceProvider {
   released: boolean = false;
@@ -113,7 +148,7 @@ export default function queryCoordinatorTest(): void {
       coordinator = new QueryCoordinator(
         session,
         store,
-        new MockSummaryService(),
+        new FakeKnowledgeGateway(),
         () => new TrustedDeviceResolver(provider),
         () => nowMs
       );
@@ -147,7 +182,7 @@ export default function queryCoordinatorTest(): void {
     it('publishesDeviceSelectionErrors', 0, async () => {
       provider = new FakeProvider([]);
       coordinator = new QueryCoordinator(
-        session, store, new MockSummaryService(),
+        session, store, new FakeKnowledgeGateway(),
         () => new TrustedDeviceResolver(provider), () => nowMs
       );
       coordinator.selectInitiator();
@@ -170,7 +205,7 @@ export default function queryCoordinatorTest(): void {
         { deviceId: 'd2', deviceName: 'Phone', deviceType: 'phone' }
       ]);
       coordinator = new QueryCoordinator(
-        session, store, new MockSummaryService(),
+        session, store, new FakeKnowledgeGateway(),
         () => new TrustedDeviceResolver(provider), () => nowMs
       );
       coordinator.selectInitiator();
@@ -213,6 +248,34 @@ export default function queryCoordinatorTest(): void {
       expect(snapshot.bytesReceived).assertLarger(0);
     });
 
+    it('mapsRemoteKnowledgeResultForDisplay', 0, async () => {
+      coordinator.selectInitiator();
+      await coordinator.connect();
+      transport.emitConnected();
+
+      const pending: Promise<void> = coordinator.submit('项目状态');
+      const query: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
+      const knowledgeResult: LocalKnowledgeResult = await new FakeKnowledgeGateway().query({
+        contractVersion: '1.0', requestId: query.requestId, queryText: '项目状态', topK: 5,
+        requestedLevel: 'L2', maxPayloadBytes: 8192
+      });
+      transport.emitMessage(codec.encode(codec.createAck(
+        'm2', query.sessionId, query.requestId, 1010, { acceptedAt: 1010 }
+      )));
+      transport.emitMessage(codec.encode(codec.createResult(
+        'm3', query.sessionId, query.requestId, 1020,
+        {
+          summary: '命中 1 条', sourceDeviceAlias: '响应端设备', processingMs: 2,
+          resultType: 'KNOWLEDGE', knowledgeResult: knowledgeResult
+        }
+      )));
+      await pending;
+
+      expect(store.snapshot().knowledgeQueryStatus).assertEqual('SUCCESS');
+      expect(store.snapshot().knowledgeItems.length).assertEqual(1);
+      expect(store.snapshot().knowledgeItems[0].title).assertEqual('项目资料');
+    });
+
     it('preservesSingleRequestLimit', 0, async () => {
       coordinator.selectInitiator();
       await coordinator.connect();
@@ -246,7 +309,8 @@ export default function queryCoordinatorTest(): void {
       const ack: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
       const result: ProtocolEnvelope = codec.decode(transport.sentMessages[1]);
       expect(ack.requestId).assertEqual('r1');
-      expect((result.payload as ResultPayload).summary).assertContain('未执行真实文档检索');
+      expect((result.payload as ResultPayload).resultType).assertEqual('KNOWLEDGE');
+      expect((result.payload as ResultPayload).knowledgeResult?.itemCount).assertEqual(1);
       expect(store.snapshot().question).assertEqual(
         (query.payload as QueryPayload).question
       );
@@ -281,7 +345,7 @@ export default function queryCoordinatorTest(): void {
       const resolverFactory = () => new TrustedDeviceResolver(provider);
       const store = new AppStateStore();
       const coordinator = new QueryCoordinator(
-        session, store, new MockSummaryService(), resolverFactory
+        session, store, new FakeKnowledgeGateway(), resolverFactory
       );
       coordinator.selectInitiator();
       coordinator.connect().then(() => {
@@ -310,7 +374,7 @@ export default function queryCoordinatorTest(): void {
       const resolverFactory = () => new TrustedDeviceResolver(provider);
       const store = new AppStateStore();
       const coordinator = new QueryCoordinator(
-        session, store, new MockSummaryService(), resolverFactory
+        session, store, new FakeKnowledgeGateway(), resolverFactory
       );
       coordinator.selectInitiator();
       coordinator.connect().then(() => {
@@ -334,7 +398,7 @@ export default function queryCoordinatorTest(): void {
       const resolverFactory = () => new TrustedDeviceResolver(provider);
       const store = new AppStateStore();
       const coordinator = new QueryCoordinator(
-        session, store, new MockSummaryService(), resolverFactory
+        session, store, new FakeKnowledgeGateway(), resolverFactory
       );
       coordinator.selectInitiator();
       coordinator.connect().then(() => {

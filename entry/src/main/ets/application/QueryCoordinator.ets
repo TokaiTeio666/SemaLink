@@ -2,13 +2,22 @@ import { AppError, ErrorStage } from '../common/AppError';
 import { SessionManager, SessionObserver } from '../communication/SessionManager';
 import { TrustedDeviceResolver } from '../communication/TrustedDeviceResolver';
 import { AppSnapshot, ConnectionState, DeviceRole, PeerDevice, maskDeviceId } from '../model/AppModels';
-import { ProtocolEnvelope, QueryPayload, ResultPayload } from '../protocol/ProtocolModels';
+import {
+  MAX_KNOWLEDGE_PAYLOAD_BYTES, ProtocolEnvelope, QueryPayload, ResultPayload
+} from '../protocol/ProtocolModels';
 import { AppStateStore } from '../state/AppStateStore';
 import { KnowledgeError } from '../contracts/knowledge/KnowledgeError';
 import { LocalKnowledgeGateway } from '../contracts/knowledge/LocalKnowledgeGateway';
 import { LocalKnowledgeQuery, LocalKnowledgeResult } from '../contracts/knowledge/KnowledgeModels';
 import { KnowledgePayloadValidator } from '../contracts/knowledge/KnowledgePayloadValidator';
 import { publishKnowledgeResult, resultSummary } from './KnowledgeResultMapper';
+import {
+  CollaborationRecord,
+  CollaborationRecordStatus,
+  createSendingRecord,
+  sortCollaborationRecords,
+  updateCollaborationRecord
+} from '../collaboration/CollaborationModels';
 
 export type ResolverFactory = () => TrustedDeviceResolver;
 export type Clock = () => number;
@@ -80,38 +89,78 @@ export class QueryCoordinator implements SessionObserver {
 
   async submit(question: string): Promise<void> {
     const startedAt: number = this.now();
+    let requestId: string = '';
     try {
       const pending: Promise<ResultPayload> = this.session.execute(question);
-      const requestId: string = this.session.activeRequestId;
+      requestId = this.session.activeRequestId;
+      const peerName: string = this.store.snapshot().peerDeviceName;
+      const targetName: string = peerName.length > 0 ? peerName : '远端设备';
+      const newRecord: CollaborationRecord = createSendingRecord({
+        id: requestId,
+        question: question,
+        sourceDeviceName: '本机',
+        targetDeviceName: targetName,
+        createdAt: startedAt
+      });
+      const existingRecords: Array<CollaborationRecord> = this.store.snapshot().collaborationRecords;
+      const recordsWithNew: Array<CollaborationRecord> = [];
+      for (let i = 0; i < existingRecords.length; i++) {
+        recordsWithNew.push(existingRecords[i]);
+      }
+      recordsWithNew.push(newRecord);
       this.store.update({
         question: question,
         summary: '',
         requestId: requestId,
         roundTripMs: 0,
-        clearError: true
+        clearError: true,
+        collaborationRecords: sortCollaborationRecords(recordsWithNew),
+        selectedCollaborationRecordId: requestId
       });
       const result: ResultPayload = await pending;
+      let evidenceCount: number = 0;
       if (result.resultType === 'KNOWLEDGE' && result.knowledgeResult !== undefined) {
         const validationRequest: LocalKnowledgeQuery = {
           contractVersion: '1.0', requestId: requestId, queryText: question, topK: 5,
-          requestedLevel: 'L2', maxPayloadBytes: 8192
+          requestedLevel: 'L2', maxPayloadBytes: MAX_KNOWLEDGE_PAYLOAD_BYTES
         };
         new KnowledgePayloadValidator().validateResult(validationRequest, result.knowledgeResult);
         publishKnowledgeResult(this.store, result.knowledgeResult);
+        evidenceCount = result.knowledgeResult.itemCount;
       } else {
         this.store.update({ summary: result.summary });
       }
+      const currentRecords: Array<CollaborationRecord> = this.store.snapshot().collaborationRecords;
+      const syncedRecords: Array<CollaborationRecord> = updateCollaborationRecord(requestId, currentRecords, {
+        status: CollaborationRecordStatus.SYNCED,
+        summary: result.summary,
+        evidenceCount: evidenceCount
+      });
       this.store.update({
         requestId: requestId,
         roundTripMs: Math.max(0, this.now() - startedAt),
-        clearError: true
+        clearError: true,
+        collaborationRecords: sortCollaborationRecords(syncedRecords)
       });
     } catch (error) {
       const appError: AppError = this.asAppError(error as Object, ErrorStage.QUERY);
-      this.store.update({
-        connectionState: this.session.state,
-        error: appError
-      });
+      if (requestId.length > 0) {
+        const errorRecords: Array<CollaborationRecord> = this.store.snapshot().collaborationRecords;
+        const failedRecords: Array<CollaborationRecord> = updateCollaborationRecord(requestId, errorRecords, {
+          status: this.mapErrorToRecordStatus(appError),
+          errorMessage: appError.message
+        });
+        this.store.update({
+          connectionState: this.session.state,
+          error: appError,
+          collaborationRecords: sortCollaborationRecords(failedRecords)
+        });
+      } else {
+        this.store.update({
+          connectionState: this.session.state,
+          error: appError
+        });
+      }
       throw appError;
     }
   }
@@ -157,6 +206,48 @@ export class QueryCoordinator implements SessionObserver {
     }
   }
 
+  selectCollaborationRecord(id: string): boolean {
+    const records: Array<CollaborationRecord> = this.store.snapshot().collaborationRecords;
+    let exists: boolean = false;
+    for (let i = 0; i < records.length; i++) {
+      if (records[i].id === id) {
+        exists = true;
+        break;
+      }
+    }
+    if (!exists) {
+      return false;
+    }
+    const currentSelectedId: string = this.store.snapshot().selectedCollaborationRecordId;
+    if (currentSelectedId !== id) {
+      this.store.update({ selectedCollaborationRecordId: id });
+    }
+    return true;
+  }
+
+  prepareFollowUp(id: string): boolean {
+    const records: Array<CollaborationRecord> = this.store.snapshot().collaborationRecords;
+    let foundQuestion: string = '';
+    let found: boolean = false;
+    for (let i = 0; i < records.length; i++) {
+      if (records[i].id === id) {
+        foundQuestion = records[i].question;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return false;
+    }
+    this.store.update({
+      selectedCollaborationRecordId: id,
+      question: foundQuestion,
+      summary: '',
+      clearError: true
+    });
+    return true;
+  }
+
   destroy(): void {
     if (this.destroyed) {
       return;
@@ -172,12 +263,29 @@ export class QueryCoordinator implements SessionObserver {
   async onIncomingQuery(envelope: ProtocolEnvelope): Promise<void> {
     const startedAt: number = this.now();
     const payload: QueryPayload = envelope.payload as QueryPayload;
+    const peerName: string = this.store.snapshot().peerDeviceName;
+    const sourceName: string = peerName.length > 0 ? peerName : '远端设备';
+    const newRecord: CollaborationRecord = createSendingRecord({
+      id: envelope.requestId,
+      question: payload.question,
+      sourceDeviceName: sourceName,
+      targetDeviceName: '本机',
+      createdAt: startedAt
+    });
+    const existingRecords: Array<CollaborationRecord> = this.store.snapshot().collaborationRecords;
+    const recordsWithNew: Array<CollaborationRecord> = [];
+    for (let i = 0; i < existingRecords.length; i++) {
+      recordsWithNew.push(existingRecords[i]);
+    }
+    recordsWithNew.push(newRecord);
     this.store.update({
       question: payload.question,
       summary: '',
       requestId: envelope.requestId,
       roundTripMs: 0,
-      clearError: true
+      clearError: true,
+      collaborationRecords: sortCollaborationRecords(recordsWithNew),
+      selectedCollaborationRecordId: envelope.requestId
     });
 
     try {
@@ -188,7 +296,7 @@ export class QueryCoordinator implements SessionObserver {
         queryText: payload.question,
         topK: 5,
         requestedLevel: 'L2',
-        maxPayloadBytes: 8192
+        maxPayloadBytes: MAX_KNOWLEDGE_PAYLOAD_BYTES
       };
       const knowledgeResult: LocalKnowledgeResult = await this.knowledgeGateway.query(request);
       const processingMs: number = Math.max(0, this.now() - startedAt);
@@ -201,15 +309,34 @@ export class QueryCoordinator implements SessionObserver {
       };
       await this.session.sendResult(envelope, result);
       publishKnowledgeResult(this.store, knowledgeResult);
-      this.store.update({ requestId: envelope.requestId, roundTripMs: processingMs, clearError: true });
+      const currentRecords: Array<CollaborationRecord> = this.store.snapshot().collaborationRecords;
+      const syncedRecords: Array<CollaborationRecord> = updateCollaborationRecord(envelope.requestId, currentRecords, {
+        status: CollaborationRecordStatus.SYNCED,
+        summary: result.summary,
+        evidenceCount: knowledgeResult.itemCount
+      });
+      this.store.update({
+        requestId: envelope.requestId,
+        roundTripMs: processingMs,
+        clearError: true,
+        collaborationRecords: sortCollaborationRecords(syncedRecords)
+      });
     } catch (error) {
       const appError: AppError = this.asAppError(error as Object, ErrorStage.QUERY);
+      const errorRecords: Array<CollaborationRecord> = this.store.snapshot().collaborationRecords;
+      const failedRecords: Array<CollaborationRecord> = updateCollaborationRecord(envelope.requestId, errorRecords, {
+        status: CollaborationRecordStatus.FAILED,
+        errorMessage: appError.message
+      });
       try {
         await this.session.sendRemoteError(envelope, appError);
       } catch (_sendError) {
         // The original query error remains the actionable failure.
       }
-      this.store.update({ error: appError });
+      this.store.update({
+        error: appError,
+        collaborationRecords: sortCollaborationRecords(failedRecords)
+      });
     }
   }
 
@@ -236,5 +363,15 @@ export class QueryCoordinator implements SessionObserver {
       return new AppError(error.code, error.message, stage, error.recoverable);
     }
     return new AppError('E_COORDINATOR', '操作失败', stage, true);
+  }
+
+  private mapErrorToRecordStatus(error: AppError): CollaborationRecordStatus {
+    if (error.code === 'E_ACK_TIMEOUT' || error.code === 'E_RESULT_TIMEOUT') {
+      return CollaborationRecordStatus.TIMEOUT;
+    }
+    if (error.code === 'E_DISCONNECTED') {
+      return CollaborationRecordStatus.OFFLINE;
+    }
+    return CollaborationRecordStatus.FAILED;
   }
 }

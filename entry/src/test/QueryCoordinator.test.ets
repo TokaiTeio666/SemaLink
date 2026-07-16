@@ -3,13 +3,19 @@ import { AppError } from '../main/ets/common/AppError';
 import { SequenceIdGenerator } from '../main/ets/common/IdGenerator';
 import { Scheduler } from '../main/ets/common/Scheduler';
 import { QueryCoordinator } from '../main/ets/application/QueryCoordinator';
+import {
+  CollaborationRecord,
+  CollaborationRecordStatus
+} from '../main/ets/collaboration/CollaborationModels';
 import { AvailableDeviceProvider, TrustedDeviceResolver } from
   '../main/ets/communication/TrustedDeviceResolver';
 import { SessionManager } from '../main/ets/communication/SessionManager';
 import { Transport, TransportListener } from '../main/ets/communication/Transport';
 import { AppSnapshot, ConnectionState, DeviceRole, maskDeviceId, PeerDevice } from '../main/ets/model/AppModels';
 import { ProtocolCodec } from '../main/ets/protocol/ProtocolCodec';
-import { ProtocolEnvelope, QueryPayload, ResultPayload } from '../main/ets/protocol/ProtocolModels';
+import {
+  MAX_KNOWLEDGE_PAYLOAD_BYTES, ProtocolEnvelope, QueryPayload, ResultPayload
+} from '../main/ets/protocol/ProtocolModels';
 import { AppStateStore } from '../main/ets/state/AppStateStore';
 import { FakeScheduler } from './support/FakeScheduler';
 import { LocalKnowledgeGateway } from '../main/ets/contracts/knowledge/LocalKnowledgeGateway';
@@ -24,7 +30,10 @@ const PEER: PeerDevice = { deviceId: 'd1', deviceName: 'MatePad', deviceType: 't
 const WANT_PARAM: Record<string, Object> = {};
 
 class FakeKnowledgeGateway implements LocalKnowledgeGateway {
+  lastRequest: LocalKnowledgeQuery | undefined;
+
   query(request: LocalKnowledgeQuery): Promise<LocalKnowledgeResult> {
+    this.lastRequest = request;
     const payload: L2KnowledgePayload = {
       schemaVersion: '1.0',
       level: 'L2',
@@ -66,6 +75,22 @@ class FakeProvider implements AvailableDeviceProvider {
 
   release(): void {
     this.released = true;
+  }
+}
+
+class FailingKnowledgeGateway implements LocalKnowledgeGateway {
+  query(request: LocalKnowledgeQuery): Promise<LocalKnowledgeResult> {
+    return Promise.reject<LocalKnowledgeResult>(new Error('知识库检索失败'));
+  }
+
+  getKnowledgeProfile(): Promise<KnowledgeProfile> {
+    const profile: KnowledgeProfile = {
+      contractVersion: '1.0', profileVersion: 'profile-test', indexState: 'READY',
+      knowledgeDomains: [], documentCount: 1, chunkCount: 1, modalities: ['text'],
+      retrievalModes: ['keyword'], supportedLevels: ['L1', 'L2'], indexVersion: 'index-test',
+      embeddingModelVersion: '', updatedAt: 1000
+    };
+    return Promise.resolve(profile);
   }
 }
 
@@ -132,6 +157,7 @@ export default function queryCoordinatorTest(): void {
     let session: SessionManager;
     let store: AppStateStore;
     let provider: FakeProvider;
+    let knowledgeGateway: FakeKnowledgeGateway;
     let nowMs: number;
     let coordinator: QueryCoordinator;
 
@@ -145,10 +171,11 @@ export default function queryCoordinatorTest(): void {
       store = new AppStateStore();
       provider = new FakeProvider([PEER]);
       nowMs = 1000;
+      knowledgeGateway = new FakeKnowledgeGateway();
       coordinator = new QueryCoordinator(
         session,
         store,
-        new FakeKnowledgeGateway(),
+        knowledgeGateway,
         () => new TrustedDeviceResolver(provider),
         () => nowMs
       );
@@ -311,6 +338,7 @@ export default function queryCoordinatorTest(): void {
       expect(ack.requestId).assertEqual('r1');
       expect((result.payload as ResultPayload).resultType).assertEqual('KNOWLEDGE');
       expect((result.payload as ResultPayload).knowledgeResult?.itemCount).assertEqual(1);
+      expect(knowledgeGateway.lastRequest?.maxPayloadBytes).assertEqual(MAX_KNOWLEDGE_PAYLOAD_BYTES);
       expect(store.snapshot().question).assertEqual(
         (query.payload as QueryPayload).question
       );
@@ -407,6 +435,347 @@ export default function queryCoordinatorTest(): void {
         expect(snapshot.peerDeviceName === '设备 B').assertFalse();
         expect(snapshot.peerDeviceName === '设备 A').assertFalse();
       });
+    });
+
+    it('createsSendingRecordOnInitiatorSubmit', 0, async () => {
+      coordinator.selectInitiator();
+      await coordinator.connect();
+      transport.emitConnected();
+
+      const pending: Promise<void> = coordinator.submit('项目状态');
+      const snapshot: AppSnapshot = store.snapshot();
+      expect(snapshot.collaborationRecords.length).assertEqual(1);
+      const record: CollaborationRecord = snapshot.collaborationRecords[0];
+      expect(record.status).assertEqual(CollaborationRecordStatus.SENDING);
+      expect(record.question).assertEqual('项目状态');
+      expect(record.sourceDeviceName).assertEqual('本机');
+      expect(record.targetDeviceName).assertEqual('MatePad');
+      expect(record.id).assertEqual(snapshot.requestId);
+      expect(record.createdAt).assertEqual(1000);
+      expect(snapshot.selectedCollaborationRecordId).assertEqual(record.id);
+
+      const query: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
+      transport.emitMessage(codec.encode(codec.createAck(
+        'm2', query.sessionId, query.requestId, 1010, { acceptedAt: 1010 }
+      )));
+      transport.emitMessage(codec.encode(codec.createResult(
+        'm3', query.sessionId, query.requestId, 1042,
+        { summary: '摘要', sourceDeviceAlias: '响应端设备', processingMs: 5 }
+      )));
+      await pending;
+    });
+
+    it('updatesRecordToSyncedOnSuccess', 0, async () => {
+      coordinator.selectInitiator();
+      await coordinator.connect();
+      transport.emitConnected();
+
+      const pending: Promise<void> = coordinator.submit('项目状态');
+      const query: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
+      nowMs = 1042;
+      transport.emitMessage(codec.encode(codec.createAck(
+        'm2', query.sessionId, query.requestId, 1010, { acceptedAt: 1010 }
+      )));
+      transport.emitMessage(codec.encode(codec.createResult(
+        'm3', query.sessionId, query.requestId, 1042,
+        { summary: '摘要', sourceDeviceAlias: '响应端设备', processingMs: 5 }
+      )));
+      await pending;
+
+      const records: Array<CollaborationRecord> = store.snapshot().collaborationRecords;
+      expect(records.length).assertEqual(1);
+      expect(records[0].status).assertEqual(CollaborationRecordStatus.SYNCED);
+      expect(records[0].summary).assertEqual('摘要');
+      expect(records[0].evidenceCount).assertEqual(0);
+      expect(records[0].question).assertEqual('项目状态');
+      expect(records[0].errorMessage).assertEqual('');
+    });
+
+    it('updatesRecordWithKnowledgeEvidenceCount', 0, async () => {
+      coordinator.selectInitiator();
+      await coordinator.connect();
+      transport.emitConnected();
+
+      const pending: Promise<void> = coordinator.submit('项目状态');
+      const query: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
+      const knowledgeResult: LocalKnowledgeResult = await new FakeKnowledgeGateway().query({
+        contractVersion: '1.0', requestId: query.requestId, queryText: '项目状态', topK: 5,
+        requestedLevel: 'L2', maxPayloadBytes: 8192
+      });
+      transport.emitMessage(codec.encode(codec.createAck(
+        'm2', query.sessionId, query.requestId, 1010, { acceptedAt: 1010 }
+      )));
+      transport.emitMessage(codec.encode(codec.createResult(
+        'm3', query.sessionId, query.requestId, 1020,
+        {
+          summary: '命中 1 条', sourceDeviceAlias: '响应端设备', processingMs: 2,
+          resultType: 'KNOWLEDGE', knowledgeResult: knowledgeResult
+        }
+      )));
+      await pending;
+
+      const records: Array<CollaborationRecord> = store.snapshot().collaborationRecords;
+      expect(records[0].status).assertEqual(CollaborationRecordStatus.SYNCED);
+      expect(records[0].evidenceCount).assertEqual(1);
+      expect(records[0].summary).assertEqual('命中 1 条');
+    });
+
+    it('prepareFollowUpRestoresQuestionWithoutSending', 0, async () => {
+      coordinator.selectInitiator();
+      await coordinator.connect();
+      transport.emitConnected();
+
+      const pending: Promise<void> = coordinator.submit('原始问题');
+      const query: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
+      transport.emitMessage(codec.encode(codec.createAck(
+        'm2', query.sessionId, query.requestId, 1010, { acceptedAt: 1010 }
+      )));
+      transport.emitMessage(codec.encode(codec.createResult(
+        'm3', query.sessionId, query.requestId, 1020,
+        { summary: '原始摘要', sourceDeviceAlias: '响应端设备', processingMs: 5 }
+      )));
+      await pending;
+
+      store.update({ question: '其他问题', summary: '其他摘要' });
+      const sentBeforeFollowUp: number = transport.sentMessages.length;
+      const recordId: string = store.snapshot().collaborationRecords[0].id;
+
+      const result: boolean = coordinator.prepareFollowUp(recordId);
+      expect(result).assertTrue();
+      expect(store.snapshot().question).assertEqual('原始问题');
+      expect(store.snapshot().summary).assertEqual('');
+      expect(transport.sentMessages.length).assertEqual(sentBeforeFollowUp);
+    });
+
+    it('prepareFollowUpReturnsFalseForMissingId', 0, async () => {
+      coordinator.selectInitiator();
+      await coordinator.connect();
+      transport.emitConnected();
+
+      const pending: Promise<void> = coordinator.submit('原始问题');
+      const query: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
+      transport.emitMessage(codec.encode(codec.createAck(
+        'm2', query.sessionId, query.requestId, 1010, { acceptedAt: 1010 }
+      )));
+      transport.emitMessage(codec.encode(codec.createResult(
+        'm3', query.sessionId, query.requestId, 1020,
+        { summary: '原始摘要', sourceDeviceAlias: '响应端设备', processingMs: 5 }
+      )));
+      await pending;
+
+      const questionBefore: string = store.snapshot().question;
+      const summaryBefore: string = store.snapshot().summary;
+      const selectedBefore: string = store.snapshot().selectedCollaborationRecordId;
+
+      const result: boolean = coordinator.prepareFollowUp('missing-id');
+      expect(result).assertFalse();
+      expect(store.snapshot().question).assertEqual(questionBefore);
+      expect(store.snapshot().summary).assertEqual(summaryBefore);
+      expect(store.snapshot().selectedCollaborationRecordId).assertEqual(selectedBefore);
+    });
+
+    it('selectCollaborationRecordUpdatesSelection', 0, async () => {
+      coordinator.selectInitiator();
+      await coordinator.connect();
+      transport.emitConnected();
+
+      const pending: Promise<void> = coordinator.submit('项目状态');
+      const query: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
+      transport.emitMessage(codec.encode(codec.createAck(
+        'm2', query.sessionId, query.requestId, 1010, { acceptedAt: 1010 }
+      )));
+      transport.emitMessage(codec.encode(codec.createResult(
+        'm3', query.sessionId, query.requestId, 1020,
+        { summary: '摘要', sourceDeviceAlias: '响应端设备', processingMs: 5 }
+      )));
+      await pending;
+
+      store.update({ selectedCollaborationRecordId: '' });
+      const recordId: string = store.snapshot().collaborationRecords[0].id;
+
+      const result: boolean = coordinator.selectCollaborationRecord(recordId);
+      expect(result).assertTrue();
+      expect(store.snapshot().selectedCollaborationRecordId).assertEqual(recordId);
+    });
+
+    it('selectCollaborationRecordReturnsFalseForMissingId', 0, async () => {
+      coordinator.selectInitiator();
+      await coordinator.connect();
+      transport.emitConnected();
+
+      const pending: Promise<void> = coordinator.submit('项目状态');
+      const query: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
+      transport.emitMessage(codec.encode(codec.createAck(
+        'm2', query.sessionId, query.requestId, 1010, { acceptedAt: 1010 }
+      )));
+      transport.emitMessage(codec.encode(codec.createResult(
+        'm3', query.sessionId, query.requestId, 1020,
+        { summary: '摘要', sourceDeviceAlias: '响应端设备', processingMs: 5 }
+      )));
+      await pending;
+
+      const selectedBefore: string = store.snapshot().selectedCollaborationRecordId;
+      const result: boolean = coordinator.selectCollaborationRecord('missing-id');
+      expect(result).assertFalse();
+      expect(store.snapshot().selectedCollaborationRecordId).assertEqual(selectedBefore);
+    });
+
+    it('mapsAckTimeoutToTimeoutStatus', 0, async () => {
+      coordinator.selectInitiator();
+      await coordinator.connect();
+      transport.emitConnected();
+
+      const pending: Promise<void> = coordinator.submit('ACK超时测试');
+      (scheduler as FakeScheduler).advanceBy(3000);
+
+      let code: string = '';
+      try {
+        await pending;
+      } catch (error) {
+        code = (error as AppError).code;
+      }
+      expect(code).assertEqual('E_ACK_TIMEOUT');
+
+      const records: Array<CollaborationRecord> = store.snapshot().collaborationRecords;
+      expect(records.length).assertEqual(1);
+      expect(records[0].status).assertEqual(CollaborationRecordStatus.TIMEOUT);
+      expect(records[0].question).assertEqual('ACK超时测试');
+      expect(records[0].errorMessage.length).assertLarger(0);
+    });
+
+    it('mapsResultTimeoutToTimeoutStatus', 0, async () => {
+      coordinator.selectInitiator();
+      await coordinator.connect();
+      transport.emitConnected();
+
+      const pending: Promise<void> = coordinator.submit('结果超时测试');
+      const query: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
+      transport.emitMessage(codec.encode(codec.createAck(
+        'm2', query.sessionId, query.requestId, 1010, { acceptedAt: 1010 }
+      )));
+      (scheduler as FakeScheduler).advanceBy(10000);
+
+      let code: string = '';
+      try {
+        await pending;
+      } catch (error) {
+        code = (error as AppError).code;
+      }
+      expect(code).assertEqual('E_RESULT_TIMEOUT');
+
+      const records: Array<CollaborationRecord> = store.snapshot().collaborationRecords;
+      expect(records.length).assertEqual(1);
+      expect(records[0].status).assertEqual(CollaborationRecordStatus.TIMEOUT);
+      expect(records[0].question).assertEqual('结果超时测试');
+      expect(records[0].errorMessage.length).assertLarger(0);
+    });
+
+    it('mapsDisconnectedToOfflineStatus', 0, async () => {
+      coordinator.selectInitiator();
+      await coordinator.connect();
+      transport.emitConnected();
+
+      const pending: Promise<void> = coordinator.submit('断连测试');
+      transport.emitDisconnected();
+
+      let code: string = '';
+      try {
+        await pending;
+      } catch (error) {
+        code = (error as AppError).code;
+      }
+      expect(code).assertEqual('E_DISCONNECTED');
+
+      const records: Array<CollaborationRecord> = store.snapshot().collaborationRecords;
+      expect(records.length).assertEqual(1);
+      expect(records[0].status).assertEqual(CollaborationRecordStatus.OFFLINE);
+      expect(records[0].question).assertEqual('断连测试');
+      expect(records[0].errorMessage.length).assertLarger(0);
+    });
+
+    it('mapsRemoteErrorToFailedStatus', 0, async () => {
+      coordinator.selectInitiator();
+      await coordinator.connect();
+      transport.emitConnected();
+
+      const pending: Promise<void> = coordinator.submit('远端错误测试');
+      const query: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
+      const remoteError: ProtocolEnvelope = codec.createError(
+        'm2', query.sessionId, query.requestId, 1010,
+        { code: 'E_REMOTE_FAILURE', message: '远端处理失败' }
+      );
+      transport.emitMessage(codec.encode(remoteError));
+
+      let code: string = '';
+      try {
+        await pending;
+      } catch (error) {
+        code = (error as AppError).code;
+      }
+      expect(code).assertEqual('E_REMOTE_FAILURE');
+
+      const records: Array<CollaborationRecord> = store.snapshot().collaborationRecords;
+      expect(records.length).assertEqual(1);
+      expect(records[0].status).assertEqual(CollaborationRecordStatus.FAILED);
+      expect(records[0].question).assertEqual('远端错误测试');
+      expect(records[0].errorMessage).assertEqual('远端处理失败');
+    });
+
+    it('createsSendingRecordOnResponderIncomingQuery', 0, async () => {
+      expect(coordinator.acceptCollaboration(WANT_PARAM)).assertTrue();
+      transport.emitConnected();
+      const query: ProtocolEnvelope = codec.createQuery(
+        'm1', 's1', 'r1', 1000, { question: '项目状态' }
+      );
+
+      const pending: Promise<void> = coordinator.onIncomingQuery(query);
+      const records: Array<CollaborationRecord> = store.snapshot().collaborationRecords;
+      expect(records.length).assertEqual(1);
+      expect(records[0].status).assertEqual(CollaborationRecordStatus.SENDING);
+      expect(records[0].question).assertEqual('项目状态');
+      expect(records[0].sourceDeviceName).assertEqual('远端设备');
+      expect(records[0].targetDeviceName).assertEqual('本机');
+      expect(records[0].id).assertEqual('r1');
+      expect(store.snapshot().selectedCollaborationRecordId).assertEqual('r1');
+      await pending;
+    });
+
+    it('updatesResponderRecordToSyncedOnSuccess', 0, async () => {
+      expect(coordinator.acceptCollaboration(WANT_PARAM)).assertTrue();
+      transport.emitConnected();
+      const query: ProtocolEnvelope = codec.createQuery(
+        'm1', 's1', 'r1', 1000, { question: '项目状态' }
+      );
+
+      await coordinator.onIncomingQuery(query);
+
+      const records: Array<CollaborationRecord> = store.snapshot().collaborationRecords;
+      expect(records.length).assertEqual(1);
+      expect(records[0].status).assertEqual(CollaborationRecordStatus.SYNCED);
+      expect(records[0].evidenceCount).assertEqual(1);
+      expect(records[0].summary).assertEqual('命中 1 条，检索耗时 2 ms');
+      expect(records[0].question).assertEqual('项目状态');
+    });
+
+    it('updatesResponderRecordToFailedOnError', 0, async () => {
+      const failingGateway: FailingKnowledgeGateway = new FailingKnowledgeGateway();
+      const failingCoordinator: QueryCoordinator = new QueryCoordinator(
+        session, store, failingGateway,
+        () => new TrustedDeviceResolver(provider), () => nowMs
+      );
+      expect(failingCoordinator.acceptCollaboration(WANT_PARAM)).assertTrue();
+      transport.emitConnected();
+      const query: ProtocolEnvelope = codec.createQuery(
+        'm1', 's1', 'r1', 1000, { question: '失败查询' }
+      );
+
+      await failingCoordinator.onIncomingQuery(query);
+
+      const records: Array<CollaborationRecord> = store.snapshot().collaborationRecords;
+      expect(records.length).assertEqual(1);
+      expect(records[0].status).assertEqual(CollaborationRecordStatus.FAILED);
+      expect(records[0].question).assertEqual('失败查询');
+      expect(records[0].errorMessage.length).assertLarger(0);
     });
   });
 }

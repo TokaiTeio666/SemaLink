@@ -29,6 +29,7 @@ import rdbKeywordRetrievalEngineTest from './RdbKeywordRetrievalEngine.test';
 import sqlLikeCandidateQueryTest from './SqlLikeCandidateQuery.test';
 import rdbSearchBackendTest from './RdbSearchBackend.test';
 import rdbSearchCapabilityProviderTest from './RdbSearchCapabilityProvider.test';
+import collaborationRecordStateTest from './CollaborationRecordState.test';
 
 export default function testsuite(): void {
   commonModelsTest();
@@ -62,4 +63,5 @@ export default function testsuite(): void {
   sqlLikeCandidateQueryTest();
   rdbSearchBackendTest();
   rdbSearchCapabilityProviderTest();
+  collaborationRecordStateTest();
 }

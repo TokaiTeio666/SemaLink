@@ -45,6 +45,8 @@ export class AppStateStore {
       knowledgeRetrievalMs: next.knowledgeRetrievalMs ?? this.current.knowledgeRetrievalMs,
       knowledgeTruncated: next.knowledgeTruncated ?? this.current.knowledgeTruncated,
       knowledgeError: next.knowledgeError ?? this.current.knowledgeError,
+      collaborationRecords: next.collaborationRecords ?? this.current.collaborationRecords,
+      selectedCollaborationRecordId: next.selectedCollaborationRecordId ?? this.current.selectedCollaborationRecordId,
       error: this.current.error
     };
     if (next.clearError === true) {

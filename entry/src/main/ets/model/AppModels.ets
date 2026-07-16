@@ -1,6 +1,7 @@
 import { AppError } from '../common/AppError';
 import { DisplayKnowledgeItem, KnowledgeQueryDisplayStatus } from '../application/KnowledgeQueryDisplayState';
 import { KnowledgeIndexState, KnowledgePayloadLevel } from '../contracts/knowledge/KnowledgeModels';
+import { CollaborationRecord } from '../collaboration/CollaborationModels';
 
 export enum DeviceRole {
   UNSELECTED = 'UNSELECTED',
@@ -49,6 +50,8 @@ export interface AppSnapshot {
   knowledgeRetrievalMs: number;
   knowledgeTruncated: boolean;
   knowledgeError: string;
+  collaborationRecords: Array<CollaborationRecord>;
+  selectedCollaborationRecordId: string;
   error?: AppError;
 }
 
@@ -74,7 +77,9 @@ export const INITIAL_SNAPSHOT: AppSnapshot = {
   knowledgeItems: [],
   knowledgeRetrievalMs: 0,
   knowledgeTruncated: false,
-  knowledgeError: ''
+  knowledgeError: '',
+  collaborationRecords: [],
+  selectedCollaborationRecordId: ''
 };
 
 export function cloneSnapshot(
@@ -106,6 +111,8 @@ export function cloneSnapshot(
     knowledgeRetrievalMs: base.knowledgeRetrievalMs,
     knowledgeTruncated: base.knowledgeTruncated,
     knowledgeError: base.knowledgeError,
+    collaborationRecords: base.collaborationRecords,
+    selectedCollaborationRecordId: base.selectedCollaborationRecordId,
     error: error ?? base.error
   };
 }

@@ -777,5 +777,144 @@ export default function queryCoordinatorTest(): void {
       expect(records[0].question).assertEqual('失败查询');
       expect(records[0].errorMessage.length).assertLarger(0);
     });
+
+    it('collaborationSubmitPreservesKnowledgeState', 0, async () => {
+      coordinator.selectInitiator();
+      await coordinator.connect();
+      transport.emitConnected();
+      // Populate knowledge state before the collaboration submit.
+      store.update({
+        knowledgeDocumentCount: 7,
+        knowledgeChunkCount: 42,
+        knowledgeQueryStatus: 'SUCCESS'
+      });
+
+      const pending: Promise<void> = coordinator.submit('项目状态');
+      const query: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
+      transport.emitMessage(codec.encode(codec.createAck(
+        'm2', query.sessionId, query.requestId, 1010, { acceptedAt: 1010 }
+      )));
+      transport.emitMessage(codec.encode(codec.createResult(
+        'm3', query.sessionId, query.requestId, 1042,
+        { summary: '摘要', sourceDeviceAlias: '响应端设备', processingMs: 5 }
+      )));
+      await pending;
+
+      const snapshot: AppSnapshot = store.snapshot();
+      // Knowledge state must be preserved across the collaboration flow.
+      expect(snapshot.knowledgeDocumentCount).assertEqual(7);
+      expect(snapshot.knowledgeChunkCount).assertEqual(42);
+      expect(snapshot.knowledgeQueryStatus).assertEqual('SUCCESS');
+      // The collaboration record should be SYNCED.
+      const records: Array<CollaborationRecord> = snapshot.collaborationRecords;
+      expect(records.length).assertEqual(1);
+      expect(records[0].status).assertEqual(CollaborationRecordStatus.SYNCED);
+    });
+
+    it('multipleCollaborationRecordsRemainNewestFirst', 0, async () => {
+      coordinator.selectInitiator();
+      await coordinator.connect();
+      transport.emitConnected();
+
+      // First query at t=1000.
+      nowMs = 1000;
+      const pending1: Promise<void> = coordinator.submit('第一个问题');
+      const query1: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
+      transport.emitMessage(codec.encode(codec.createAck(
+        'm2', query1.sessionId, query1.requestId, 1010, { acceptedAt: 1010 }
+      )));
+      transport.emitMessage(codec.encode(codec.createResult(
+        'm3', query1.sessionId, query1.requestId, 1020,
+        { summary: '摘要1', sourceDeviceAlias: '响应端设备', processingMs: 5 }
+      )));
+      await pending1;
+
+      // Second query at t=2000.
+      nowMs = 2000;
+      const pending2: Promise<void> = coordinator.submit('第二个问题');
+      const query2: ProtocolEnvelope = codec.decode(transport.sentMessages[transport.sentMessages.length - 1]);
+      transport.emitMessage(codec.encode(codec.createAck(
+        'm4', query2.sessionId, query2.requestId, 2010, { acceptedAt: 2010 }
+      )));
+      transport.emitMessage(codec.encode(codec.createResult(
+        'm5', query2.sessionId, query2.requestId, 2020,
+        { summary: '摘要2', sourceDeviceAlias: '响应端设备', processingMs: 3 }
+      )));
+      await pending2;
+
+      const records: Array<CollaborationRecord> = store.snapshot().collaborationRecords;
+      expect(records.length).assertEqual(2);
+      // Newest-first: the second record (createdAt=2000) should be first.
+      expect(records[0].createdAt).assertEqual(2000);
+      expect(records[0].question).assertEqual('第二个问题');
+      expect(records[0].status).assertEqual(CollaborationRecordStatus.SYNCED);
+      expect(records[0].summary).assertEqual('摘要2');
+      expect(records[1].createdAt).assertEqual(1000);
+      expect(records[1].question).assertEqual('第一个问题');
+      expect(records[1].status).assertEqual(CollaborationRecordStatus.SYNCED);
+      // The most recent record should be selected.
+      expect(store.snapshot().selectedCollaborationRecordId).assertEqual(records[0].id);
+    });
+
+    it('retryCreatesNewRecordPreservingFailedHistory', 0, async () => {
+      coordinator.selectInitiator();
+      await coordinator.connect();
+      transport.emitConnected();
+
+      // First query receives a remote error -> FAILED record, session stays CONNECTED.
+      const pending: Promise<void> = coordinator.submit('失败问题');
+      const query: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
+      const remoteError: ProtocolEnvelope = codec.createError(
+        'm2', query.sessionId, query.requestId, 1010,
+        { code: 'E_REMOTE_FAILURE', message: '远端处理失败' }
+      );
+      transport.emitMessage(codec.encode(remoteError));
+
+      let code: string = '';
+      try {
+        await pending;
+      } catch (error) {
+        code = (error as AppError).code;
+      }
+      expect(code).assertEqual('E_REMOTE_FAILURE');
+
+      const failedRecords: Array<CollaborationRecord> = store.snapshot().collaborationRecords;
+      expect(failedRecords.length).assertEqual(1);
+      const failedId: string = failedRecords[0].id;
+      expect(failedRecords[0].status).assertEqual(CollaborationRecordStatus.FAILED);
+      expect(failedRecords[0].question).assertEqual('失败问题');
+
+      // Retry: restore the question from the failed record, then submit again.
+      expect(coordinator.prepareFollowUp(failedId)).assertTrue();
+      expect(store.snapshot().question).assertEqual('失败问题');
+      expect(store.snapshot().summary).assertEqual('');
+
+      nowMs = 5000;
+      const retryPending: Promise<void> = coordinator.submit('失败问题');
+      const retryQuery: ProtocolEnvelope = codec.decode(
+        transport.sentMessages[transport.sentMessages.length - 1]
+      );
+      transport.emitMessage(codec.encode(codec.createAck(
+        'm3', retryQuery.sessionId, retryQuery.requestId, 5010, { acceptedAt: 5010 }
+      )));
+      transport.emitMessage(codec.encode(codec.createResult(
+        'm4', retryQuery.sessionId, retryQuery.requestId, 5020,
+        { summary: '重试摘要', sourceDeviceAlias: '响应端设备', processingMs: 4 }
+      )));
+      await retryPending;
+
+      const records: Array<CollaborationRecord> = store.snapshot().collaborationRecords;
+      expect(records.length).assertEqual(2);
+      // Newest-first: the retried record (createdAt=5000) should be first and SYNCED.
+      expect(records[0].createdAt).assertEqual(5000);
+      expect(records[0].status).assertEqual(CollaborationRecordStatus.SYNCED);
+      expect(records[0].summary).assertEqual('重试摘要');
+      // The old failed record must be preserved in history.
+      expect(records[1].id).assertEqual(failedId);
+      expect(records[1].status).assertEqual(CollaborationRecordStatus.FAILED);
+      expect(records[1].question).assertEqual('失败问题');
+      // The retried record should be selected.
+      expect(store.snapshot().selectedCollaborationRecordId).assertEqual(records[0].id);
+    });
   });
 }

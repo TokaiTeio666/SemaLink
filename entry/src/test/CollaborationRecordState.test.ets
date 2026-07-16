@@ -126,5 +126,61 @@ export default function collaborationRecordStateTest(): void {
       expect(updated[0].summary).assertEqual('');
       expect(updated[0].status).assertEqual(CollaborationRecordStatus.SENDING);
     });
+
+    it('statusEnumValuesAreStableForUiMapping', 0, () => {
+      // The UI statusLabel/statusColor switch statements depend on each enum value
+      // being a unique stable string. Verify each value matches its expected literal.
+      // Since all five expected literals are different, these assertions implicitly
+      // verify pairwise uniqueness — if two members shared a value, one would fail.
+      expect(CollaborationRecordStatus.SENDING).assertEqual('SENDING');
+      expect(CollaborationRecordStatus.SYNCED).assertEqual('SYNCED');
+      expect(CollaborationRecordStatus.OFFLINE).assertEqual('OFFLINE');
+      expect(CollaborationRecordStatus.FAILED).assertEqual('FAILED');
+      expect(CollaborationRecordStatus.TIMEOUT).assertEqual('TIMEOUT');
+    });
+
+    it('updateCollaborationRecordPreservesIdentityFields', 0, () => {
+      const record: CollaborationRecord = createSendingRecord(makeInput('r1', 1000));
+      const updated: Array<CollaborationRecord> = updateCollaborationRecord('r1', [record], {
+        status: CollaborationRecordStatus.SYNCED,
+        summary: '新摘要',
+        evidenceCount: 5,
+        errorMessage: '错误信息'
+      });
+      expect(updated.length).assertEqual(1);
+      // Identity fields must be preserved (not overwritten by the update).
+      expect(updated[0].id).assertEqual('r1');
+      expect(updated[0].question).assertEqual('项目状态');
+      expect(updated[0].sourceDeviceName).assertEqual('本机');
+      expect(updated[0].targetDeviceName).assertEqual('MatePad');
+      expect(updated[0].createdAt).assertEqual(1000);
+      // Mutable fields should reflect the update.
+      expect(updated[0].status).assertEqual(CollaborationRecordStatus.SYNCED);
+      expect(updated[0].summary).assertEqual('新摘要');
+      expect(updated[0].evidenceCount).assertEqual(5);
+      expect(updated[0].errorMessage).assertEqual('错误信息');
+      // The original record must remain unchanged (immutable).
+      expect(record.status).assertEqual(CollaborationRecordStatus.SENDING);
+      expect(record.summary).assertEqual('');
+      expect(record.evidenceCount).assertEqual(0);
+      expect(record.errorMessage).assertEqual('');
+    });
+
+    it('sortCollaborationRecordsIsStableForEqualTimestamps', 0, () => {
+      const r1: CollaborationRecord = createSendingRecord(makeInput('r1', 1000));
+      const r2: CollaborationRecord = createSendingRecord(makeInput('r2', 1000));
+      const r3: CollaborationRecord = createSendingRecord(makeInput('r3', 1000));
+      const records: Array<CollaborationRecord> = [r3, r1, r2];
+      const sorted: Array<CollaborationRecord> = sortCollaborationRecords(records);
+      expect(sorted.length).assertEqual(3);
+      // Equal timestamps sort by id ascending (stable tiebreaker).
+      expect(sorted[0].id).assertEqual('r1');
+      expect(sorted[1].id).assertEqual('r2');
+      expect(sorted[2].id).assertEqual('r3');
+      // Input array order must remain unchanged.
+      expect(records[0].id).assertEqual('r3');
+      expect(records[1].id).assertEqual('r1');
+      expect(records[2].id).assertEqual('r2');
+    });
   });
 }

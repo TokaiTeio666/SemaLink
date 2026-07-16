@@ -118,5 +118,54 @@ export default function indexPageTest(): void {
       expect(cloned.collaborationRecords[0].id).assertEqual('request-2');
       expect(cloned.selectedCollaborationRecordId).assertEqual('request-2');
     });
+
+    it('cloneSnapshotPreservesKnowledgeWhenCollaborationChanges', 0, () => {
+      const record: CollaborationRecord = createSendingRecord({
+        id: 'request-3',
+        question: '协作问题',
+        sourceDeviceName: '本机',
+        targetDeviceName: 'MatePad',
+        createdAt: 3000
+      });
+      const store = new AppStateStore();
+      // Populate both knowledge AND collaboration state.
+      store.update({
+        knowledgeDocumentCount: 5,
+        knowledgeChunkCount: 30,
+        knowledgeQueryStatus: 'SUCCESS',
+        collaborationRecords: sortCollaborationRecords([record]),
+        selectedCollaborationRecordId: 'request-3'
+      });
+      const populated = store.snapshot();
+      // Clone with a connection state change (simulating collaboration activity).
+      const cloned = cloneSnapshot(populated, undefined, ConnectionState.CONNECTED);
+      // Knowledge fields must be preserved across the clone.
+      expect(cloned.knowledgeDocumentCount).assertEqual(5);
+      expect(cloned.knowledgeChunkCount).assertEqual(30);
+      expect(cloned.knowledgeQueryStatus).assertEqual('SUCCESS');
+      // Collaboration fields must also be preserved.
+      expect(cloned.collaborationRecords.length).assertEqual(1);
+      expect(cloned.collaborationRecords[0].id).assertEqual('request-3');
+      expect(cloned.selectedCollaborationRecordId).assertEqual('request-3');
+    });
+
+    it('updatePreservesKnowledgeFieldsDuringCollaborationUpdate', 0, () => {
+      const store = new AppStateStore();
+      // Populate knowledge state first.
+      store.update({
+        knowledgeDocumentCount: 3,
+        knowledgeChunkCount: 15,
+        knowledgeQueryStatus: 'SUCCESS'
+      });
+      // A collaboration-only update must preserve the knowledge fields.
+      store.update({
+        selectedCollaborationRecordId: 'request-1'
+      });
+      const after = store.snapshot();
+      expect(after.knowledgeDocumentCount).assertEqual(3);
+      expect(after.knowledgeChunkCount).assertEqual(15);
+      expect(after.knowledgeQueryStatus).assertEqual('SUCCESS');
+      expect(after.selectedCollaborationRecordId).assertEqual('request-1');
+    });
   });
 }

@@ -393,7 +393,8 @@ export class SessionManager implements TransportListener {
     this.clearPending();
     this.transition(ConnectionState.CONNECTED);
     if (reject !== null) {
-      reject(new AppError('E_REMOTE_ERROR', '远端返回错误', ErrorStage.PROTOCOL, true));
+      const errorPayload: ErrorPayload = envelope.payload as ErrorPayload;
+      reject(new AppError(errorPayload.code, errorPayload.message, ErrorStage.PROTOCOL, true));
     }
   }
 

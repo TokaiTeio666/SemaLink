@@ -1,0 +1,39 @@
+<h2>详情面板里，哪个动作应该最突出？</h2>
+<p class="subtitle">列表 + 详情已确定，现在收敛用户查看一条协作记录后的下一步</p>
+
+<div class="cards" data-multiselect>
+  <div class="card" data-choice="continue-query" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f5f7fa;padding:14px;min-height:276px;color:#172033;font-family:system-ui,sans-serif">
+      <div style="display:flex;gap:9px;min-height:248px">
+        <div style="width:37%;background:#fff;border:1px solid #dfe5ed;border-radius:8px;padding:11px"><b style="font-size:11px">最近活动</b><div style="background:#edf5ff;border-radius:5px;padding:8px;margin-top:12px;font-size:9px"><b>数据库事务设计</b><div style="margin-top:4px;color:#738096">14:38 · 平板 B</div></div><div style="padding:8px;font-size:9px;color:#6d7b8f">项目需求说明<br><span style="font-size:8px">昨天 · 手机 A</span></div></div>
+        <div style="flex:1;background:#fff;border:1px solid #dfe5ed;border-radius:8px;padding:12px"><div style="font-size:10px;color:#738096">活动详情 · 已同步</div><div style="font-size:14px;font-weight:700;margin-top:8px">数据库事务设计</div><div style="font-size:10px;color:#738096;margin-top:6px">平板 B 已打开这条查询</div><div style="border:1px solid #d8e1ed;border-radius:6px;padding:9px;margin-top:15px;font-size:10px">继续询问：<br><span style="color:#8995a6">“它和项目需求中的一致性要求有什么关系？”</span></div><div style="background:#172033;color:#fff;border-radius:5px;text-align:center;padding:8px;margin-top:12px;font-size:10px">继续查询 →</div></div>
+      </div>
+    </div>
+    <div class="card-body"><h3>继续查询优先</h3><p>记录不是终点，直接把原上下文带回输入框，用户可以自然地追问和延伸。</p></div>
+  </div>
+
+  <div class="card" data-choice="resend-task" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f5f7fa;padding:14px;min-height:276px;color:#172033;font-family:system-ui,sans-serif">
+      <div style="display:flex;gap:9px;min-height:248px">
+        <div style="width:37%;background:#fff;border:1px solid #dfe5ed;border-radius:8px;padding:11px"><b style="font-size:11px">最近活动</b><div style="background:#fff5e9;border-radius:5px;padding:8px;margin-top:12px;font-size:9px"><b>数据库事务设计</b><div style="margin-top:4px;color:#a06e2c">发送失败 · 平板 B</div></div><div style="padding:8px;font-size:9px;color:#6d7b8f">项目需求说明<br><span style="font-size:8px">昨天 · 手机 A</span></div></div>
+        <div style="flex:1;background:#fff;border:1px solid #dfe5ed;border-radius:8px;padding:12px"><div style="font-size:10px;color:#a06e2c">需要处理 · 发送未完成</div><div style="font-size:14px;font-weight:700;margin-top:8px">数据库事务设计</div><div style="font-size:10px;color:#738096;margin-top:6px">平板 B 当前离线，内容仍保存在手机 A</div><div style="background:#fff5e9;border-radius:6px;padding:9px;margin-top:15px;font-size:10px">最近在线：3 分钟前<br><span style="color:#8b6a3d">查询上下文未丢失</span></div><div style="border:1px solid #172033;color:#172033;border-radius:5px;text-align:center;padding:8px;margin-top:12px;font-size:10px">重新发送</div></div>
+      </div>
+    </div>
+    <div class="card-body"><h3>重新发送优先</h3><p>把跨设备可靠性放在第一位，失败记录直接给出重试动作和当前设备状态。</p></div>
+  </div>
+
+  <div class="card" data-choice="evidence-review" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f5f7fa;padding:14px;min-height:276px;color:#172033;font-family:system-ui,sans-serif">
+      <div style="display:flex;gap:9px;min-height:248px">
+        <div style="width:37%;background:#fff;border:1px solid #dfe5ed;border-radius:8px;padding:11px"><b style="font-size:11px">最近活动</b><div style="background:#edf5ff;border-radius:5px;padding:8px;margin-top:12px;font-size:9px"><b>数据库事务设计</b><div style="margin-top:4px;color:#738096">4 条证据</div></div><div style="padding:8px;font-size:9px;color:#6d7b8f">项目需求说明<br><span style="font-size:8px">12 条证据</span></div></div>
+        <div style="flex:1;background:#172033;color:#fff;border-radius:8px;padding:12px"><div style="font-size:10px;color:#b9d6ff">证据详情</div><div style="font-size:14px;font-weight:700;margin-top:8px">数据库事务设计</div><div style="height:1px;background:#44536b;margin:14px 0"></div><div style="font-size:10px;color:#bdc8d9">匹配片段</div><div style="background:#2c3b53;border-radius:5px;padding:8px;margin-top:8px;font-size:9px;line-height:1.5">事务应覆盖完整业务操作，确保异常时可以回滚。</div><div style="display:flex;gap:7px;margin-top:14px"><div style="flex:1;border:1px solid #7799c5;border-radius:5px;text-align:center;padding:7px;font-size:9px">查看原文</div><div style="flex:1;border:1px solid #7799c5;border-radius:5px;text-align:center;padding:7px;font-size:9px">继续查询</div></div></div>
+      </div>
+    </div>
+    <div class="card-body"><h3>证据审阅优先</h3><p>详情首先展开查询证据，突出本地知识来源和可追溯性，再提供继续查询或打开原文。</p></div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:22px">
+  <p class="label">选择方式</p>
+  <p>请选择一个主操作，也可以点选两个让我组合成默认操作和次要操作。下一步就可以整理完整的页面设计。</p>
+</div>

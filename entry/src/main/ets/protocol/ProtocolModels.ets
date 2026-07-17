@@ -1,7 +1,9 @@
 import { LocalKnowledgeResult } from '../contracts/knowledge/KnowledgeModels';
 
 export const PROTOCOL_VERSION: string = '1.0';
-export const MAX_MESSAGE_BYTES: number = 16 * 1024;
+// abilityConnectionManager.sendMessage rejects payloads above its 4 KiB transport limit.
+export const MAX_MESSAGE_BYTES: number = 4 * 1024;
+export const MAX_KNOWLEDGE_PAYLOAD_BYTES: number = 3 * 1024;
 export const MAX_QUESTION_CHARS: number = 1000;
 export const MAX_SUMMARY_CHARS: number = 2000;
 

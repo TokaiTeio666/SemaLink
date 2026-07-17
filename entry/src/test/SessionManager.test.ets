@@ -206,6 +206,28 @@ export default function sessionManagerTest(): void {
       expect(outcome.summary).assertEqual('ok');
     });
 
+    it('preservesRemoteErrorDetails', 0, async () => {
+      await manager.connect(PEER);
+      transport.emitConnected();
+
+      const pending = manager.execute('remote failure');
+      const query: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
+      const remoteError: ProtocolEnvelope = codec.createError(
+        'm2', query.sessionId, query.requestId, 1010,
+        { code: 'E_SYSTEM_401', message: 'PARAMETER ERROR' }
+      );
+      transport.emitMessage(codec.encode(remoteError));
+
+      let error: AppError | undefined;
+      try {
+        await pending;
+      } catch (caught) {
+        error = caught as AppError;
+      }
+      expect(error?.code).assertEqual('E_SYSTEM_401');
+      expect(error?.message).assertEqual('PARAMETER ERROR');
+    });
+
     it('cleansUpPendingOnDisconnect', 0, async () => {
       await manager.connect(PEER);
       transport.emitConnected();

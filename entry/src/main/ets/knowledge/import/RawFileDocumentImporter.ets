@@ -90,7 +90,8 @@ export class RawFileDocumentImporter {
       tags: item.tags,
       checksum: checksum,
       createdAt: item.createdAt,
-      updatedAt: item.createdAt
+      updatedAt: item.createdAt,
+      privacyLevel: 'PRIVATE_GROUP'
     };
   }
 }

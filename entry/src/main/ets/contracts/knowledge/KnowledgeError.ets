@@ -13,7 +13,10 @@ export type KnowledgeErrorCode =
   'E_FILE_EMPTY' |
   'E_FILE_READ_FAILED' |
   'E_FILE_PICKER_FAILED' |
-  'E_FILE_SELECTION_CANCELLED';
+  'E_FILE_SELECTION_CANCELLED' |
+  'E_STORAGE_FAILED' |
+  'E_EVIDENCE_INVALID' |
+  'E_PROFILE_INVALID';
 
 export class KnowledgeError extends Error {
   readonly code: KnowledgeErrorCode;

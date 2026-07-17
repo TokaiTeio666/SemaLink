@@ -2,6 +2,10 @@ import { describe, expect, it } from '@ohos/hypium';
 import { AppRuntime } from '../main/ets/runtime/AppRuntime';
 import { Transport, TransportListener } from '../main/ets/communication/Transport';
 import { PeerDevice } from '../main/ets/model/AppModels';
+import { KnowledgeError } from '../main/ets/contracts/knowledge/KnowledgeError';
+import { KnowledgeProfile } from '../main/ets/contracts/knowledge/KnowledgeModels';
+import { SemanticKnowledgeProvider } from '../main/ets/contracts/semantic/SemanticKnowledgeProvider';
+import { EvidenceUnit, TaskRequest } from '../main/ets/contracts/semantic/SemanticModels';
 
 class CountingTransport implements Transport {
   listener: TransportListener | null = null;
@@ -32,6 +36,35 @@ function fakeContext(): FakeContext {
   return { applicationInfo: { name: 'com.example.semalink' } };
 }
 
+class FakeSemanticProvider implements SemanticKnowledgeProvider {
+  calls: number = 0;
+
+  async getProfile(): Promise<KnowledgeProfile> {
+    this.calls += 1;
+    return {
+      contractVersion: '1.0', profileVersion: 'fake-profile', indexState: 'EMPTY', knowledgeDomains: [],
+      documentCount: 0, chunkCount: 0, modalities: [], retrievalModes: ['keyword'],
+      supportedLevels: ['L1', 'L2'], indexVersion: 'fake-index', embeddingModelVersion: '', updatedAt: 1
+    };
+  }
+
+  async searchEvidence(task: TaskRequest): Promise<EvidenceUnit[]> {
+    this.calls += 1;
+    return [];
+  }
+}
+
+async function capturedKnowledgeError(action: () => Promise<void>): Promise<KnowledgeError | undefined> {
+  try {
+    await action();
+  } catch (error) {
+    if (error instanceof KnowledgeError) {
+      return error;
+    }
+  }
+  return undefined;
+}
+
 export default function appRuntimeTest(): void {
   describe('AppRuntime', () => {
     it('initializesTheSingletonOnlyOnce', 0, () => {
@@ -56,6 +89,35 @@ export default function appRuntimeTest(): void {
       runtime.destroy();
       runtime.destroy();
       expect(transport.destroyCalls).assertEqual(1);
+    });
+
+    it('exposes an injected fake semantic provider without creating real knowledge storage', 0, async () => {
+      const fake = new FakeSemanticProvider();
+      const runtime = new AppRuntime(fakeContext() as never, {
+        transport: new CountingTransport(), knowledgeProvider: fake
+      });
+      await runtime.initializeKnowledge();
+      const profile = await runtime.knowledgeProvider.getProfile();
+      expect(profile.profileVersion).assertEqual('fake-profile');
+      expect(fake.calls).assertEqual(1);
+      expect(runtime.knowledgeGateway === undefined).assertTrue();
+      runtime.destroy();
+    });
+
+    it('exposes the default knowledge provider and gateway from one application service', 0, () => {
+      const runtime = new AppRuntime(fakeContext() as never, { transport: new CountingTransport() });
+      expect(runtime.knowledgeGateway as Object).assertEqual(runtime.knowledgeProvider as Object);
+      runtime.destroy();
+      runtime.destroy();
+    });
+
+    it('returns safe not-ready through the default provider before knowledge initialization', 0, async () => {
+      const runtime = new AppRuntime(fakeContext() as never, { transport: new CountingTransport() });
+      const error = await capturedKnowledgeError(async (): Promise<void> => {
+        await runtime.knowledgeProvider.getProfile();
+      });
+      expect(error?.code).assertEqual('E_INDEX_NOT_READY');
+      runtime.destroy();
     });
   });
 }

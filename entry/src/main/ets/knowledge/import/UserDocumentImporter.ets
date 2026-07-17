@@ -44,7 +44,8 @@ export class UserDocumentImporter {
           tags: this.keywordExtractor.extract(title, input.normalizedText),
           checksum: checksum,
           createdAt: now,
-          updatedAt: now
+          updatedAt: now,
+          privacyLevel: 'PRIVATE_GROUP'
         };
         const chunks = this.chunker.chunkDocument(document.documentId, document.normalizedText, now);
         await this.repository.saveDocumentWithChunks(document, chunks);

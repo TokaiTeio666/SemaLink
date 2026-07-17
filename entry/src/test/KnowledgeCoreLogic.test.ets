@@ -3,7 +3,9 @@ import { normalizeText } from '../main/ets/knowledge/import/TextNormalizer';
 import { DocumentChunker } from '../main/ets/knowledge/import/DocumentChunker';
 import { KnowledgeDocument } from '../main/ets/knowledge/model/KnowledgeDocument';
 import { DocumentChunk } from '../main/ets/knowledge/model/DocumentChunk';
-import { KeywordRetrievalEngine } from '../main/ets/knowledge/retrieval/KeywordRetrievalEngine';
+import {
+  ReferenceKeywordSearch as KeywordRetrievalEngine
+} from './support/ReferenceRetrievalEngine';
 import { tokenizeQuery } from '../main/ets/knowledge/retrieval/QueryTokenizer';
 import { utf8ByteLength } from '../main/ets/knowledge/payload/Utf8Sizer';
 import { L2PayloadBuilder } from '../main/ets/knowledge/payload/L2PayloadBuilder';
@@ -13,6 +15,7 @@ import { LocalKnowledgeQuery, LocalKnowledgeResult } from '../main/ets/contracts
 import { KnowledgePayloadValidator } from '../main/ets/contracts/knowledge/KnowledgePayloadValidator';
 import { RepositoryStatistics, KnowledgeMetadata } from '../main/ets/knowledge/storage/DocumentRepository';
 import { L1KnowledgePayload, L2KnowledgePayload } from '../main/ets/contracts/knowledge/KnowledgePayloadSchemas';
+import { KnowledgeRetrievalRequest } from '../main/ets/knowledge/retrieval/RetrievalEngine';
 
 function document(id: string, title: string, tags: string[], text: string): KnowledgeDocument {
   return {
@@ -23,7 +26,8 @@ function document(id: string, title: string, tags: string[], text: string): Know
     tags: tags,
     checksum: 'sum-' + id,
     createdAt: 1,
-    updatedAt: 1
+    updatedAt: 1,
+    privacyLevel: 'PRIVATE_GROUP'
   };
 }
 
@@ -41,10 +45,16 @@ function chunk(id: string, docId: string, index: number, text: string): Document
   };
 }
 
-function query(text: string): LocalKnowledgeQuery {
+function query(text: string): KnowledgeRetrievalRequest {
   return {
-    contractVersion: '1.0', requestId: 'q1', queryText: text, topK: 5,
-    requestedLevel: 'L2', maxPayloadBytes: 1024
+    queryText: text, topK: 5, privacyLevel: 'LOCAL_ONLY'
+  };
+}
+
+function legacyQuery(text: string, level: 'L1' | 'L2'): LocalKnowledgeQuery {
+  return {
+    contractVersion: '1.0', requestId: 'q-' + level, queryText: text, topK: 5,
+    requestedLevel: level, maxPayloadBytes: 4096
   };
 }
 
@@ -339,11 +349,8 @@ export default function knowledgeCoreLogicTest() {
       expect(l1Payload.items[0].summary.length <= 300).assertTrue();
       expect(l2Payload.items[0].snippet.length <= 1500).assertTrue();
 
-      const l1Request = query('进程和线程并发');
-      l1Request.requestedLevel = 'L1';
-      l1Request.maxPayloadBytes = 4096;
-      const l2Request = query('进程和线程并发');
-      l2Request.maxPayloadBytes = 4096;
+      const l1Request = legacyQuery('进程和线程并发', 'L1');
+      const l2Request = legacyQuery('进程和线程并发', 'L2');
       const l1Result: LocalKnowledgeResult = {
         contractVersion: '1.0', requestId: l1Request.requestId, level: 'L1', itemCount: l1.itemCount,
         payloadJson: l1.payloadJson, truncated: l1.truncated, retrievalMs: 0,

@@ -108,7 +108,7 @@ export function createBenchmarkCorpus(): BenchmarkCorpus {
     const document: KnowledgeDocument = {
       documentId: source.documentId, title: source.title, modality: 'text', normalizedText: source.text,
       tags: source.tags, checksum: 'benchmark-' + source.documentId, createdAt: 1783958400000,
-      updatedAt: 1783958400000
+      updatedAt: 1783958400000, privacyLevel: 'PRIVATE_GROUP'
     };
     documents.push(document);
     const documentChunks = chunker.chunkDocument(document.documentId, document.normalizedText, document.updatedAt);

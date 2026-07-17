@@ -1,6 +1,8 @@
 import { Context } from '@kit.AbilityKit';
 import { KnowledgeError } from '../contracts/knowledge/KnowledgeError';
 import { LocalKnowledgeGateway } from '../contracts/knowledge/LocalKnowledgeGateway';
+import { SemanticKnowledgeProvider } from '../contracts/semantic/SemanticKnowledgeProvider';
+import { EvidenceUnit, TaskRequest } from '../contracts/semantic/SemanticModels';
 import {
   ImportReport,
   KnowledgeProfile,
@@ -10,20 +12,36 @@ import {
 import { RawFileDocumentImporter } from '../knowledge/import/RawFileDocumentImporter';
 import { UserDocumentImportCoordinator } from '../knowledge/import/UserDocumentImportCoordinator';
 import { DocumentRepository } from '../knowledge/storage/DocumentRepository';
+import { KnowledgeDatabase } from '../knowledge/storage/KnowledgeDatabase';
 import { KnowledgeComponents, KnowledgeCompositionRoot } from './KnowledgeCompositionRoot';
 
-export class KnowledgeApplicationService {
+export class KnowledgeApplicationService implements LocalKnowledgeGateway, SemanticKnowledgeProvider {
   private gateway?: LocalKnowledgeGateway;
+  private provider?: SemanticKnowledgeProvider;
   private importer?: RawFileDocumentImporter;
   private userImporter?: UserDocumentImportCoordinator;
   private repository?: DocumentRepository;
+  private database?: KnowledgeDatabase;
+  private destroyed: boolean = false;
 
-  async initialize(context: Context): Promise<void> {
-    const components: KnowledgeComponents = await KnowledgeCompositionRoot.create(context);
+  async initialize(context: Context, sourceDeviceId: string = 'local-device'): Promise<void> {
+    if (this.destroyed) {
+      throw this.notInitialized();
+    }
+    if (this.database !== undefined) {
+      return;
+    }
+    const components: KnowledgeComponents = await KnowledgeCompositionRoot.create(context, sourceDeviceId);
+    if (this.destroyed) {
+      components.database.close();
+      throw this.notInitialized();
+    }
     this.gateway = components.gateway;
+    this.provider = components.provider;
     this.importer = components.importer;
     this.userImporter = components.userImporter;
     this.repository = components.repository;
+    this.database = components.database;
   }
 
   async importBuiltInDocuments(): Promise<ImportReport> {
@@ -59,6 +77,37 @@ export class KnowledgeApplicationService {
       throw this.notInitialized();
     }
     return this.gateway.getKnowledgeProfile();
+  }
+
+  async searchEvidence(task: TaskRequest): Promise<EvidenceUnit[]> {
+    if (this.provider === undefined) {
+      throw this.notInitialized();
+    }
+    return this.provider.searchEvidence(task);
+  }
+
+  async getProfile(): Promise<KnowledgeProfile> {
+    if (this.provider === undefined) {
+      throw this.notInitialized();
+    }
+    return this.provider.getProfile();
+  }
+
+  destroy(): void {
+    if (this.destroyed) {
+      return;
+    }
+    this.destroyed = true;
+    const database = this.database;
+    this.gateway = undefined;
+    this.provider = undefined;
+    this.importer = undefined;
+    this.userImporter = undefined;
+    this.repository = undefined;
+    this.database = undefined;
+    if (database !== undefined) {
+      database.close();
+    }
   }
 
   private notInitialized(): KnowledgeError {

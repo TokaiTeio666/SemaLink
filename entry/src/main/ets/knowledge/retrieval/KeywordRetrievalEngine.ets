@@ -1,4 +1,3 @@
-import { LocalKnowledgeQuery, KnowledgeQueryFilters } from '../../contracts/knowledge/KnowledgeModels';
 import { DocumentChunk } from '../model/DocumentChunk';
 import { KnowledgeDocument } from '../model/KnowledgeDocument';
 import { RetrievalCandidate } from '../model/RetrievalCandidate';
@@ -6,7 +5,6 @@ import { analyzeQuery } from './QueryTokenizer';
 import { RelevanceScore, scoreChunk } from './RelevanceScorer';
 import {
   KnowledgeRetrievalRequest,
-  RETRIEVAL_CANDIDATE_LIMIT,
   RetrievalEngine
 } from './RetrievalEngine';
 import {
@@ -14,8 +12,6 @@ import {
   TaskRequestFilters,
   validateTaskRequestFilters
 } from '../../contracts/semantic/SemanticModels';
-
-type SupportedFilters = KnowledgeQueryFilters | TaskRequestFilters;
 
 function includesValue(values: string[] | undefined, value: string): boolean {
   return values === undefined || values.length === 0 || values.indexOf(value) >= 0;
@@ -33,7 +29,7 @@ function matchesTags(required: string[] | undefined, actual: string[]): boolean 
   return true;
 }
 
-function matchesFilters(document: KnowledgeDocument, filters: SupportedFilters | undefined,
+function matchesFilters(document: KnowledgeDocument, filters: TaskRequestFilters | undefined,
   privacyLevel: PrivacyLevel): boolean {
   if (privacyLevel === 'PRIVATE_GROUP' && document.privacyLevel !== 'PRIVATE_GROUP') {
     return false;
@@ -65,17 +61,14 @@ export class KeywordRetrievalEngine implements RetrievalEngine {
     return 'keyword';
   }
 
-  search(request: LocalKnowledgeQuery | KnowledgeRetrievalRequest,
+  search(request: KnowledgeRetrievalRequest,
     documents: KnowledgeDocument[], chunks: DocumentChunk[]): RetrievalCandidate[] {
     const analysis = analyzeQuery(request.queryText);
-    const semanticRequest = request as KnowledgeRetrievalRequest;
-    validateTaskRequestFilters(semanticRequest.filters);
-    const privacyLevel: PrivacyLevel = semanticRequest.privacyLevel === undefined ?
-      'LOCAL_ONLY' : semanticRequest.privacyLevel;
+    validateTaskRequestFilters(request.filters);
     const results: RetrievalCandidate[] = [];
     for (const chunk of chunks) {
       const document = findDocument(documents, chunk.documentId);
-      if (document === undefined || !matchesFilters(document, request.filters, privacyLevel)) {
+      if (document === undefined || !matchesFilters(document, request.filters, request.privacyLevel)) {
         continue;
       }
       const score: RelevanceScore = scoreChunk(analysis, document, chunk);
@@ -97,8 +90,6 @@ export class KeywordRetrievalEngine implements RetrievalEngine {
       const documentOrder = left.document.documentId.localeCompare(right.document.documentId);
       return documentOrder !== 0 ? documentOrder : left.chunk.chunkId.localeCompare(right.chunk.chunkId);
     });
-    const resultLimit: number = semanticRequest.privacyLevel === undefined ?
-      request.topK : RETRIEVAL_CANDIDATE_LIMIT;
-    return results.slice(0, resultLimit);
+    return results.slice(0, request.topK);
   }
 }

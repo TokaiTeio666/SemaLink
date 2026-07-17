@@ -8,6 +8,7 @@ import { L1PayloadBuilder } from '../../main/ets/knowledge/payload/L1PayloadBuil
 import { L2PayloadBuilder } from '../../main/ets/knowledge/payload/L2PayloadBuilder';
 import { KnowledgeProfileBuilder } from '../../main/ets/knowledge/profile/KnowledgeProfileBuilder';
 import { KeywordRetrievalEngine } from '../../main/ets/knowledge/retrieval/KeywordRetrievalEngine';
+import { KnowledgeRetrievalRequest } from '../../main/ets/knowledge/retrieval/RetrievalEngine';
 import { ArkDataLocalKnowledgeService } from '../../main/ets/knowledge/service/ArkDataLocalKnowledgeService';
 import {
   ANSWERABLE_BENCHMARK_QUERIES,
@@ -287,8 +288,11 @@ export class LocalRetrievalBenchmarkRunner {
   }
 
   private diagnostics(queryId: string, queryText: string, corpus: BenchmarkCorpus): CandidateDiagnostic[] {
+    const retrievalRequest: KnowledgeRetrievalRequest = {
+      queryText: queryText, topK: 5, privacyLevel: 'LOCAL_ONLY'
+    };
     const candidates = new KeywordRetrievalEngine().search(
-      request('diagnostic-' + queryId, queryText, 'L2', 5), corpus.documents, corpus.chunks);
+      retrievalRequest, corpus.documents, corpus.chunks);
     const diagnostics: CandidateDiagnostic[] = [];
     for (const candidate of candidates) {
       diagnostics.push({

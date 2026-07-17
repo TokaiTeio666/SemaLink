@@ -10,10 +10,14 @@ import { SequenceIdGenerator } from '../common/IdGenerator';
 import { ProtocolCodec } from '../protocol/ProtocolCodec';
 import { MockSummaryService } from '../task/MockSummaryService';
 import { SystemScheduler } from '../common/Scheduler';
+import { SemanticKnowledgeProvider } from '../contracts/semantic/SemanticKnowledgeProvider';
+import { LocalKnowledgeGateway } from '../contracts/knowledge/LocalKnowledgeGateway';
+import { KnowledgeApplicationService } from '../application/KnowledgeApplicationService';
 
 export interface RuntimeDependencies {
   transport?: Transport;
   resolverFactory?: ResolverFactory;
+  knowledgeProvider?: SemanticKnowledgeProvider;
 }
 
 export class AppRuntime {
@@ -22,8 +26,13 @@ export class AppRuntime {
 
   readonly store: AppStateStore;
   readonly coordinator: QueryCoordinator;
+  readonly knowledgeProvider: SemanticKnowledgeProvider;
+  readonly knowledgeGateway?: LocalKnowledgeGateway;
+  private readonly ownedKnowledgeService?: KnowledgeApplicationService;
+  private readonly context: common.UIAbilityContext;
 
   constructor(context: common.UIAbilityContext, dependencies: RuntimeDependencies = {}) {
+    this.context = context;
     const bundleName: string = context.applicationInfo.name;
     const transport: Transport = dependencies.transport ??
       new CollaborationTransport(context, bundleName, new Logger());
@@ -37,6 +46,15 @@ export class AppRuntime {
     this.coordinator = new QueryCoordinator(
       session, this.store, new MockSummaryService(), resolverFactory
     );
+    if (dependencies.knowledgeProvider !== undefined) {
+      this.knowledgeProvider = dependencies.knowledgeProvider;
+      this.knowledgeGateway = undefined;
+    } else {
+      const knowledgeService = new KnowledgeApplicationService();
+      this.ownedKnowledgeService = knowledgeService;
+      this.knowledgeProvider = knowledgeService;
+      this.knowledgeGateway = knowledgeService;
+    }
   }
 
   static initialize(context: common.UIAbilityContext): AppRuntime {
@@ -61,11 +79,21 @@ export class AppRuntime {
     AppRuntime.active = null;
   }
 
+  async initializeKnowledge(): Promise<void> {
+    if (this.ownedKnowledgeService === undefined) {
+      return;
+    }
+    await this.ownedKnowledgeService.initialize(this.context, 'local-device');
+  }
+
   destroy(): void {
     if (this.destroyed) {
       return;
     }
     this.destroyed = true;
     this.coordinator.destroy();
+    if (this.ownedKnowledgeService !== undefined) {
+      this.ownedKnowledgeService.destroy();
+    }
   }
 }

@@ -1,5 +1,4 @@
 import { describe, expect, it } from '@ohos/hypium';
-import { LocalKnowledgeQuery } from '../main/ets/contracts/knowledge/KnowledgeModels';
 import { KnowledgeError } from '../main/ets/contracts/knowledge/KnowledgeError';
 import { PrivacyLevel } from '../main/ets/contracts/semantic/SemanticModels';
 import { DocumentChunk } from '../main/ets/knowledge/model/DocumentChunk';
@@ -46,16 +45,6 @@ export default function retrievalEngineTest() {
     it('exposes keyword as the only implemented retrieval mode', 0, () => {
       const engine: RetrievalEngine = new KeywordRetrievalEngine();
       expect(engine.mode()).assertEqual('keyword');
-    });
-
-    it('keeps the legacy LocalKnowledgeQuery search compatible', 0, () => {
-      const legacy: LocalKnowledgeQuery = {
-        contractVersion: '1.0', requestId: 'legacy', queryText: 'process scheduling', topK: 5,
-        requestedLevel: 'L2', maxPayloadBytes: 4096
-      };
-      const documents = [document('local', 'LOCAL_ONLY', ['os'], 2)];
-      const results = new KeywordRetrievalEngine().search(legacy, documents, [chunk('c-local', 'local', 0)]);
-      expect(results.length).assertEqual(1);
     });
 
     it('applies the confirmed privacy matrix', 0, () => {
@@ -114,7 +103,7 @@ export default function retrievalEngineTest() {
         chunks.push(chunk('chunk-' + id, 'doc-' + id, 0));
       }
       const semantic: KnowledgeRetrievalRequest = {
-        queryText: 'process scheduling', topK: 100, privacyLevel: 'PRIVATE_GROUP'
+        queryText: 'process scheduling', topK: 20, privacyLevel: 'PRIVATE_GROUP'
       };
       const results = new KeywordRetrievalEngine().search(semantic, documents, chunks);
       expect(results.length).assertEqual(20);

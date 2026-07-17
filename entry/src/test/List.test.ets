@@ -23,6 +23,8 @@ import knowledgeImportPrivacyTest from './KnowledgeImportPrivacy.test';
 import retrievalEngineTest from './RetrievalEngine.test';
 import evidenceUnitFactoryTest from './EvidenceUnitFactory.test';
 import rdbDocumentRepositoryContractTest from './RdbDocumentRepositoryContract.test';
+import semanticKnowledgeProviderTest from './SemanticKnowledgeProvider.test';
+import semanticAcceptanceTest from './SemanticAcceptance.test';
 
 export default function testsuite(): void {
   commonModelsTest();
@@ -50,4 +52,6 @@ export default function testsuite(): void {
   retrievalEngineTest();
   evidenceUnitFactoryTest();
   rdbDocumentRepositoryContractTest();
+  semanticKnowledgeProviderTest();
+  semanticAcceptanceTest();
 }

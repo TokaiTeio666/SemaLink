@@ -3,6 +3,8 @@ import { KnowledgeError } from '../../contracts/knowledge/KnowledgeError';
 import { KnowledgeIndexState, KnowledgeModality } from '../../contracts/knowledge/KnowledgeModels';
 import { DocumentChunk } from '../model/DocumentChunk';
 import { KnowledgeDocument } from '../model/KnowledgeDocument';
+import { RetrievalCandidate, RetrievalDocument } from '../model/RetrievalCandidate';
+import { KnowledgeRetrievalRequest } from '../retrieval/RetrievalEngine';
 import {
   DocumentRepository,
   DomainCount,
@@ -11,6 +13,8 @@ import {
 } from './DocumentRepository';
 import { KnowledgeDatabase } from './KnowledgeDatabase';
 import { parseStoredPrivacyLevel } from './KnowledgeDatabaseSchema';
+import { KnowledgeCandidateSearch } from './KnowledgeCandidateSearch';
+import { buildSqlLikeCandidateQuery, SqlLikeCandidateQuery } from './SqlLikeCandidateQuery';
 
 export function storageOperationError(): KnowledgeError {
   return new KnowledgeError('E_STORAGE_FAILED', 'Local knowledge storage operation failed', true);
@@ -65,11 +69,101 @@ function incrementDomain(counts: DomainCount[], tag: string): void {
   counts.push({ tag: tag, documentCount: 1 });
 }
 
-export class RdbDocumentRepository implements DocumentRepository {
+function matchedSearchTerms(terms: string[], document: RetrievalDocument, chunk: DocumentChunk): string[] {
+  const text = (document.title + ' ' + document.tags.join(' ') + ' ' + chunk.summary + ' ' +
+    chunk.keywords.join(' ') + ' ' + chunk.text).toLowerCase();
+  const matched: string[] = [];
+  for (const term of terms) {
+    if (text.includes(term)) {
+      matched.push(term);
+    }
+  }
+  return matched;
+}
+
+function compact(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9\u4E00-\u9FFF]+/g, '');
+}
+
+function mapCandidate(result: relationalStore.ResultSet, query: SqlLikeCandidateQuery,
+  request: KnowledgeRetrievalRequest): RetrievalCandidate {
+  const document: RetrievalDocument = {
+    documentId: result.getString(0), title: result.getString(1), modality: parseStoredModality(result.getString(2)),
+    tags: parseStoredStringArray(result.getString(3)), updatedAt: result.getLong(4),
+    privacyLevel: parseStoredPrivacyLevel(result.getString(5))
+  };
+  const chunk: DocumentChunk = {
+    chunkId: result.getString(6), documentId: document.documentId, chunkIndex: result.getLong(7),
+    text: result.getString(8), summary: result.getString(9), keywords: parseStoredStringArray(result.getString(10)),
+    startOffset: result.getLong(11), endOffset: result.getLong(12), updatedAt: result.getLong(13)
+  };
+  const rawScore: number = Math.max(0, result.getDouble(14));
+  const normalized: number = Math.round((rawScore / (rawScore + 10)) * 10000) / 10000;
+  const searchable = compact(document.title + document.tags.join(' ') + chunk.summary + chunk.text);
+  const normalizedQuery = compact(request.queryText);
+  return {
+    document: document,
+    chunk: chunk,
+    relevance: Number.isFinite(normalized) ? normalized : 0,
+    matchedPrimaryTerms: matchedSearchTerms(query.primaryTerms, document, chunk),
+    matchedNgrams: matchedSearchTerms(query.ngrams, document, chunk),
+    exactPhraseMatched: normalizedQuery.length >= 2 && searchable.includes(normalizedQuery)
+  };
+}
+
+export interface RdbSearchDiagnostics {
+  searchCalls: number;
+  candidateRowsReturned: number;
+  fullReadCallsDuringSearch: number;
+}
+
+export class RdbDocumentRepository implements DocumentRepository, KnowledgeCandidateSearch {
   private readonly database: KnowledgeDatabase;
+  private activeCandidateSearch: number = 0;
+  private searchCalls: number = 0;
+  private candidateRowsReturned: number = 0;
+  private fullReadCallsDuringSearch: number = 0;
 
   constructor(database: KnowledgeDatabase) {
     this.database = database;
+  }
+
+  async searchCandidates(request: KnowledgeRetrievalRequest): Promise<RetrievalCandidate[]> {
+    this.activeCandidateSearch += 1;
+    this.searchCalls += 1;
+    try {
+      const query: SqlLikeCandidateQuery | undefined = buildSqlLikeCandidateQuery(request);
+      if (query === undefined) return [];
+      const candidates: RetrievalCandidate[] = [];
+      try {
+        const result = await this.database.getStore().querySql(query.sql, query.bindArgs);
+        try {
+          while (result.goToNextRow()) candidates.push(mapCandidate(result, query, request));
+        } finally {
+          result.close();
+        }
+      } catch (error) {
+        throw storageOperationError();
+      }
+      this.candidateRowsReturned += candidates.length;
+      return candidates;
+    } finally {
+      this.activeCandidateSearch -= 1;
+    }
+  }
+
+  resetSearchDiagnostics(): void {
+    this.searchCalls = 0;
+    this.candidateRowsReturned = 0;
+    this.fullReadCallsDuringSearch = 0;
+  }
+
+  getSearchDiagnostics(): RdbSearchDiagnostics {
+    return {
+      searchCalls: this.searchCalls,
+      candidateRowsReturned: this.candidateRowsReturned,
+      fullReadCallsDuringSearch: this.fullReadCallsDuringSearch
+    };
   }
 
   async saveDocumentWithChunks(document: KnowledgeDocument, chunks: DocumentChunk[]): Promise<void> {
@@ -124,6 +218,7 @@ export class RdbDocumentRepository implements DocumentRepository {
   }
 
   async listDocuments(): Promise<KnowledgeDocument[]> {
+    if (this.activeCandidateSearch > 0) this.fullReadCallsDuringSearch += 1;
     const documents: KnowledgeDocument[] = [];
     try {
       const result = await this.database.getStore().querySql(
@@ -149,6 +244,7 @@ export class RdbDocumentRepository implements DocumentRepository {
   }
 
   async listChunks(): Promise<DocumentChunk[]> {
+    if (this.activeCandidateSearch > 0) this.fullReadCallsDuringSearch += 1;
     const chunks: DocumentChunk[] = [];
     try {
       const result = await this.database.getStore().querySql(

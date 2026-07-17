@@ -6,9 +6,9 @@ import { L1PayloadBuilder } from '../main/ets/knowledge/payload/L1PayloadBuilder
 import { L2PayloadBuilder } from '../main/ets/knowledge/payload/L2PayloadBuilder';
 import { utf8ByteLength } from '../main/ets/knowledge/payload/Utf8Sizer';
 import { KnowledgeProfileBuilder } from '../main/ets/knowledge/profile/KnowledgeProfileBuilder';
-import { KeywordRetrievalEngine } from '../main/ets/knowledge/retrieval/KeywordRetrievalEngine';
 import { ArkDataLocalKnowledgeService } from '../main/ets/knowledge/service/ArkDataLocalKnowledgeService';
 import { InMemoryBenchmarkRepository } from './benchmark/InMemoryBenchmarkRepository';
+import { ReferenceRetrievalEngine } from './support/ReferenceRetrievalEngine';
 import {
   SEMANTIC_ACCEPTANCE_CASES,
   SEMANTIC_ACCEPTANCE_CHUNKS,
@@ -19,7 +19,8 @@ import {
 function provider(): ArkDataLocalKnowledgeService {
   return new ArkDataLocalKnowledgeService(
     new InMemoryBenchmarkRepository(SEMANTIC_ACCEPTANCE_DOCUMENTS, SEMANTIC_ACCEPTANCE_CHUNKS),
-    new KeywordRetrievalEngine(), new L1PayloadBuilder(), new L2PayloadBuilder(),
+    new ReferenceRetrievalEngine(SEMANTIC_ACCEPTANCE_DOCUMENTS, SEMANTIC_ACCEPTANCE_CHUNKS),
+    new L1PayloadBuilder(), new L2PayloadBuilder(),
     new KnowledgeProfileBuilder(), new KnowledgePayloadValidator(), new EvidenceUnitFactory(), 'fixture-device'
   );
 }

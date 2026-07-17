@@ -2,17 +2,14 @@ import { describe, expect, it } from '@ohos/hypium';
 import { EvidenceUnit, PrivacyLevel, TaskRequest } from '../main/ets/contracts/semantic/SemanticModels';
 import { EvidenceUnitFactory } from '../main/ets/knowledge/evidence/EvidenceUnitFactory';
 import { DocumentChunk } from '../main/ets/knowledge/model/DocumentChunk';
-import { KnowledgeDocument } from '../main/ets/knowledge/model/KnowledgeDocument';
-import { RetrievalCandidate } from '../main/ets/knowledge/model/RetrievalCandidate';
+import { RetrievalCandidate, RetrievalDocument } from '../main/ets/knowledge/model/RetrievalCandidate';
 import { utf8ByteLength } from '../main/ets/knowledge/payload/Utf8Sizer';
 
 function candidate(documentId: string, chunkId: string, chunkIndex: number, privacyLevel: PrivacyLevel,
   relevance: number, text: string = 'Process scheduling uses a priority queue.'): RetrievalCandidate {
-  const document: KnowledgeDocument = {
+  const document: RetrievalDocument = {
     documentId: documentId, title: 'Process Scheduling', modality: 'text',
-    normalizedText: 'full source file:///private/source SQL stack /data/private datashare://source',
-    tags: ['Operating System', 'Queue'], checksum: 'sum-' + documentId,
-    createdAt: 1, updatedAt: 2, privacyLevel: privacyLevel
+    tags: ['Operating System', 'Queue'], updatedAt: 2, privacyLevel: privacyLevel
   };
   const chunk: DocumentChunk = {
     chunkId: chunkId, documentId: documentId, chunkIndex: chunkIndex, text: text,
@@ -177,16 +174,15 @@ export default function evidenceUnitFactoryTest() {
       expect(json.includes('full source')).assertFalse();
     });
 
-    it('never uses internal error messages or stack traces as evidence content', 0, () => {
+    it('uses only the lightweight document projection as evidence input', 0, () => {
       const clean = candidate('safe', 'chunk-safe', 0, 'PRIVATE_GROUP', 0.8,
         'SQL 查询优化使用执行计划');
-      clean.document.normalizedText = 'Error: query failed at file:///data/private\nstack trace internal';
       const unit = new EvidenceUnitFactory().build([clean],
         task(['L2'], 'PRIVATE_GROUP'), 'local-device')[0];
-      const json = JSON.stringify(unit).toLowerCase();
 
-      expect(json.includes('query failed')).assertFalse();
-      expect(json.includes('stack trace internal')).assertFalse();
+      expect(JSON.stringify(clean.document).includes('normalizedText')).assertFalse();
+      expect(JSON.stringify(clean.document).includes('checksum')).assertFalse();
+      expect(JSON.stringify(clean.document).includes('createdAt')).assertFalse();
       expect(unit.snippet).assertEqual('SQL 查询优化使用执行计划');
     });
 

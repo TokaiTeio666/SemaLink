@@ -99,15 +99,13 @@ export class ArkDataLocalKnowledgeService implements LocalKnowledgeGateway, Sema
       if (metadata.indexState === 'ERROR') {
         throw new KnowledgeError('E_RETRIEVAL_FAILED', 'Local knowledge index is unavailable', true);
       }
-      const documents = await this.repository.listDocuments();
-      const chunks = await this.repository.listChunks();
       const retrievalRequest: KnowledgeRetrievalRequest = {
         queryText: request.queryText,
         topK: request.topK,
         privacyLevel: 'LOCAL_ONLY',
         filters: toRetrievalFilters(request)
       };
-      const candidates = this.retrieval.search(retrievalRequest, documents, chunks);
+      const candidates = await this.retrieval.search(retrievalRequest);
       let payload: BudgetedPayload;
       if (request.requestedLevel === 'L1') {
         payload = this.l1Builder.build(candidates, request.maxPayloadBytes);
@@ -167,14 +165,12 @@ export class ArkDataLocalKnowledgeService implements LocalKnowledgeGateway, Sema
       if (metadata.indexState === 'EMPTY') {
         return [];
       }
-      const documents = await this.repository.listDocuments();
-      const chunks = await this.repository.listChunks();
-      const candidates = this.retrieval.search({
+      const candidates = await this.retrieval.search({
         queryText: task.queryText,
         topK: RETRIEVAL_CANDIDATE_LIMIT,
         privacyLevel: task.privacyLevel,
         filters: task.filters
-      }, documents, chunks);
+      });
       return this.evidenceFactory.build(candidates, task, this.sourceDeviceId);
     } catch (error) {
       if (error instanceof KnowledgeError) {

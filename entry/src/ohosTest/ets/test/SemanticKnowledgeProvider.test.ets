@@ -2,10 +2,21 @@ import { abilityDelegatorRegistry } from '@kit.TestKit';
 import { describe, expect, it } from '@ohos/hypium';
 import { KnowledgeCompositionRoot } from '../../../main/ets/application/KnowledgeCompositionRoot';
 import { TaskRequest } from '../../../main/ets/contracts/semantic/SemanticModels';
+import { EvidenceUnit } from '../../../main/ets/contracts/semantic/SemanticModels';
 import { DocumentChunk } from '../../../main/ets/knowledge/model/DocumentChunk';
 import { KnowledgeDocument } from '../../../main/ets/knowledge/model/KnowledgeDocument';
+import {
+  chooseEnabledRdbSearchBackend,
+  chooseRdbSearchBackend
+} from '../../../main/ets/knowledge/storage/RdbSearchCapabilityProbe';
 import { AppRuntime } from '../../../main/ets/runtime/AppRuntime';
 import { FakeTransport } from '../../../test/support/FakeTransport';
+import {
+  SEMANTIC_ACCEPTANCE_CASES,
+  SEMANTIC_ACCEPTANCE_CHUNKS,
+  SEMANTIC_ACCEPTANCE_DOCUMENTS
+} from '../../../test/support/SemanticFixtures';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 
 function request(taskId: string, privacyLevel: 'LOCAL_ONLY' | 'PRIVATE_GROUP',
   levels: ('L1' | 'L2')[] = ['L1', 'L2']): TaskRequest {
@@ -25,6 +36,10 @@ export default function semanticKnowledgeProviderDeviceTest(): void {
       try {
         expect(components.gateway === components.service).assertTrue();
         expect(components.provider === components.service).assertTrue();
+        expect(components.searchCapabilities.probedBackend).assertEqual(
+          chooseRdbSearchBackend(components.searchCapabilities));
+        expect(components.searchBackend).assertEqual(
+          chooseEnabledRdbSearchBackend(components.searchCapabilities));
         const imported = await components.importer.importBuiltInDocuments();
         expect(imported.importedDocuments).assertEqual(12);
         const statistics = await components.repository.getStatistics();
@@ -103,6 +118,48 @@ export default function semanticKnowledgeProviderDeviceTest(): void {
       await second.knowledgeProvider.getProfile();
       second.destroy();
       expect(true).assertTrue();
+    });
+
+    it('matches all twenty-four fixed semantic tasks through real database retrieval', 0, async () => {
+      const ability = await abilityDelegatorRegistry.getAbilityDelegator().getCurrentTopAbility();
+      const components = await KnowledgeCompositionRoot.create(ability.context, 'device-acceptance');
+      await components.repository.clearAll();
+      try {
+        for (const document of SEMANTIC_ACCEPTANCE_DOCUMENTS) {
+          const chunks: DocumentChunk[] = [];
+          for (const candidate of SEMANTIC_ACCEPTANCE_CHUNKS) {
+            if (candidate.documentId === document.documentId) chunks.push(candidate);
+          }
+          await components.repository.saveDocumentWithChunks(document, chunks);
+        }
+        await components.repository.setMetadata({
+          indexState: 'READY', indexVersion: 'device-rdb-acceptance',
+          profileVersion: 'device-rdb-acceptance', updatedAt: 500
+        });
+        for (let index = 0; index < SEMANTIC_ACCEPTANCE_CASES.length; index++) {
+          const fixture = SEMANTIC_ACCEPTANCE_CASES[index];
+          const units: EvidenceUnit[] = await components.provider.searchEvidence(fixture.task);
+          const documentIds: string[] = [];
+          const levels: string[] = [];
+          for (const unit of units) {
+            if (documentIds.indexOf(unit.sourceDocId) < 0) documentIds.push(unit.sourceDocId);
+            levels.push(unit.level);
+          }
+          const documentsMatch = JSON.stringify(documentIds) === JSON.stringify(fixture.expectedDocumentIds);
+          const levelsMatch = JSON.stringify(levels) === JSON.stringify(fixture.expectedLevels);
+          if (!documentsMatch || !levelsMatch) {
+            hilog.error(0x534C, 'RdbSemanticAcceptance',
+              'failureIndex=%{public}d actualDocuments=%{public}d actualLevels=%{public}d',
+              index, documentIds.length, levels.length);
+          }
+          expect(documentsMatch).assertTrue();
+          expect(levelsMatch).assertTrue();
+        }
+        hilog.info(0x534C, 'RdbSemanticAcceptance', 'passed=%{public}d', SEMANTIC_ACCEPTANCE_CASES.length);
+      } finally {
+        await components.repository.clearAll();
+        components.database.close();
+      }
     });
   });
 }

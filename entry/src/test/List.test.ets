@@ -25,6 +25,10 @@ import evidenceUnitFactoryTest from './EvidenceUnitFactory.test';
 import rdbDocumentRepositoryContractTest from './RdbDocumentRepositoryContract.test';
 import semanticKnowledgeProviderTest from './SemanticKnowledgeProvider.test';
 import semanticAcceptanceTest from './SemanticAcceptance.test';
+import rdbKeywordRetrievalEngineTest from './RdbKeywordRetrievalEngine.test';
+import sqlLikeCandidateQueryTest from './SqlLikeCandidateQuery.test';
+import rdbSearchBackendTest from './RdbSearchBackend.test';
+import rdbSearchCapabilityProviderTest from './RdbSearchCapabilityProvider.test';
 
 export default function testsuite(): void {
   commonModelsTest();
@@ -54,4 +58,8 @@ export default function testsuite(): void {
   rdbDocumentRepositoryContractTest();
   semanticKnowledgeProviderTest();
   semanticAcceptanceTest();
+  rdbKeywordRetrievalEngineTest();
+  sqlLikeCandidateQueryTest();
+  rdbSearchBackendTest();
+  rdbSearchCapabilityProviderTest();
 }

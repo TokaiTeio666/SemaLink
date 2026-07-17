@@ -3,10 +3,11 @@ import { KnowledgeError } from '../main/ets/contracts/knowledge/KnowledgeError';
 import { PrivacyLevel } from '../main/ets/contracts/semantic/SemanticModels';
 import { DocumentChunk } from '../main/ets/knowledge/model/DocumentChunk';
 import { KnowledgeDocument } from '../main/ets/knowledge/model/KnowledgeDocument';
-import { KeywordRetrievalEngine } from '../main/ets/knowledge/retrieval/KeywordRetrievalEngine';
+import {
+  ReferenceKeywordSearch as KeywordRetrievalEngine
+} from './support/ReferenceRetrievalEngine';
 import {
   KnowledgeRetrievalRequest,
-  RetrievalEngine
 } from '../main/ets/knowledge/retrieval/RetrievalEngine';
 
 function document(id: string, privacyLevel: PrivacyLevel, tags: string[], updatedAt: number): KnowledgeDocument {
@@ -43,7 +44,7 @@ function capturedCode(action: () => void): string {
 export default function retrievalEngineTest() {
   describe('RetrievalEngine', () => {
     it('exposes keyword as the only implemented retrieval mode', 0, () => {
-      const engine: RetrievalEngine = new KeywordRetrievalEngine();
+      const engine = new KeywordRetrievalEngine();
       expect(engine.mode()).assertEqual('keyword');
     });
 

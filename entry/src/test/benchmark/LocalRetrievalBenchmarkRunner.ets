@@ -7,7 +7,10 @@ import { KnowledgeDocument } from '../../main/ets/knowledge/model/KnowledgeDocum
 import { L1PayloadBuilder } from '../../main/ets/knowledge/payload/L1PayloadBuilder';
 import { L2PayloadBuilder } from '../../main/ets/knowledge/payload/L2PayloadBuilder';
 import { KnowledgeProfileBuilder } from '../../main/ets/knowledge/profile/KnowledgeProfileBuilder';
-import { KeywordRetrievalEngine } from '../../main/ets/knowledge/retrieval/KeywordRetrievalEngine';
+import {
+  ReferenceKeywordSearch as KeywordRetrievalEngine,
+  ReferenceRetrievalEngine
+} from '../support/ReferenceRetrievalEngine';
 import { KnowledgeRetrievalRequest } from '../../main/ets/knowledge/retrieval/RetrievalEngine';
 import { ArkDataLocalKnowledgeService } from '../../main/ets/knowledge/service/ArkDataLocalKnowledgeService';
 import {
@@ -176,7 +179,7 @@ function rankOf(actual: string[], expected: string[]): number {
 function createGateway(corpus: BenchmarkCorpus): ArkDataLocalKnowledgeService {
   return new ArkDataLocalKnowledgeService(
     new InMemoryBenchmarkRepository(corpus.documents, corpus.chunks),
-    new KeywordRetrievalEngine(), new L1PayloadBuilder(), new L2PayloadBuilder(),
+    new ReferenceRetrievalEngine(corpus.documents, corpus.chunks), new L1PayloadBuilder(), new L2PayloadBuilder(),
     new KnowledgeProfileBuilder(), new KnowledgePayloadValidator()
   );
 }
@@ -499,7 +502,7 @@ export class LocalRetrievalBenchmarkRunner {
     lines.push('');
     lines.push('## 限制');
     lines.push('');
-    lines.push('- 主机环境使用真实 KeywordRetrievalEngine、Payload Builder 和 Validator，并以真实内置文档构造内存 Repository；不等同于真实 ArkData RDB 设备耗时。');
+    lines.push('- 主机环境使用测试专用 ReferenceKeywordSearch、Payload Builder 和 Validator，并以真实内置文档构造内存 Repository；不等同于真实 ArkData RDB 设备耗时。');
     lines.push('- 规模数据为确定性内存生成，仅用于观察增长趋势。');
     lines.push('- 未包含设备路由、网络通信、连接成功率、跨设备首结果延迟、UI 渲染或系统级资源指标。');
     lines.push('- 设备 ohosTest 结果必须单独执行和报告，不能由 HAP 构建成功代替。');

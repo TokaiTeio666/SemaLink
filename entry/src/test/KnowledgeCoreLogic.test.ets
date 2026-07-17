@@ -3,7 +3,9 @@ import { normalizeText } from '../main/ets/knowledge/import/TextNormalizer';
 import { DocumentChunker } from '../main/ets/knowledge/import/DocumentChunker';
 import { KnowledgeDocument } from '../main/ets/knowledge/model/KnowledgeDocument';
 import { DocumentChunk } from '../main/ets/knowledge/model/DocumentChunk';
-import { KeywordRetrievalEngine } from '../main/ets/knowledge/retrieval/KeywordRetrievalEngine';
+import {
+  ReferenceKeywordSearch as KeywordRetrievalEngine
+} from './support/ReferenceRetrievalEngine';
 import { tokenizeQuery } from '../main/ets/knowledge/retrieval/QueryTokenizer';
 import { utf8ByteLength } from '../main/ets/knowledge/payload/Utf8Sizer';
 import { L2PayloadBuilder } from '../main/ets/knowledge/payload/L2PayloadBuilder';

@@ -10,13 +10,15 @@ import { KnowledgeDocument } from '../main/ets/knowledge/model/KnowledgeDocument
 import { L1PayloadBuilder } from '../main/ets/knowledge/payload/L1PayloadBuilder';
 import { L2PayloadBuilder } from '../main/ets/knowledge/payload/L2PayloadBuilder';
 import { KnowledgeProfileBuilder } from '../main/ets/knowledge/profile/KnowledgeProfileBuilder';
-import { KeywordRetrievalEngine } from '../main/ets/knowledge/retrieval/KeywordRetrievalEngine';
+import {
+  ReferenceKeywordSearch as KeywordRetrievalEngine
+} from './support/ReferenceRetrievalEngine';
 import {
   KnowledgeRetrievalRequest,
   RETRIEVAL_CANDIDATE_LIMIT,
   RetrievalEngine
 } from '../main/ets/knowledge/retrieval/RetrievalEngine';
-import { RetrievalCandidate } from '../main/ets/knowledge/model/RetrievalCandidate';
+import { RetrievalCandidate, RetrievalDocument } from '../main/ets/knowledge/model/RetrievalCandidate';
 import { ArkDataLocalKnowledgeService } from '../main/ets/knowledge/service/ArkDataLocalKnowledgeService';
 import {
   DocumentRepository,
@@ -32,6 +34,8 @@ class ProviderRepository implements DocumentRepository {
   chunks: DocumentChunk[];
   metadata: KnowledgeMetadata;
   failureKind: '' | 'storage' | 'unknown' = '';
+  listDocumentsCalls: number = 0;
+  listChunksCalls: number = 0;
 
   constructor(state: 'EMPTY' | 'BUILDING' | 'READY' | 'ERROR' = 'READY') {
     this.documents = [{
@@ -59,11 +63,13 @@ class ProviderRepository implements DocumentRepository {
   async setMetadata(metadata: KnowledgeMetadata): Promise<void> { this.metadata = metadata; }
 
   async listDocuments(): Promise<KnowledgeDocument[]> {
+    this.listDocumentsCalls += 1;
     this.throwIfFailed();
     return this.documents.slice();
   }
 
   async listChunks(): Promise<DocumentChunk[]> {
+    this.listChunksCalls += 1;
     this.throwIfFailed();
     return this.chunks.slice();
   }
@@ -101,26 +107,60 @@ class RecordingRetrievalEngine implements RetrievalEngine {
     return 'keyword';
   }
 
-  search(request: KnowledgeRetrievalRequest, documents: KnowledgeDocument[], chunks: DocumentChunk[]):
-    RetrievalCandidate[] {
+  async search(request: KnowledgeRetrievalRequest): Promise<RetrievalCandidate[]> {
     this.lastRequest = request;
-    const candidates: RetrievalCandidate[] = [];
-    const count: number = Math.min(documents.length, chunks.length, request.topK);
-    for (let index = 0; index < count; index++) {
-      candidates.push({
-        document: documents[index], chunk: chunks[index], relevance: 1,
-        matchedPrimaryTerms: [request.queryText], matchedNgrams: [], exactPhraseMatched: true
-      });
-    }
-    return candidates;
+    const repository = new ProviderRepository();
+    const stored = repository.documents[0];
+    const document: RetrievalDocument = {
+      documentId: stored.documentId, title: stored.title, modality: stored.modality,
+      tags: stored.tags, updatedAt: stored.updatedAt, privacyLevel: stored.privacyLevel
+    };
+    const candidate: RetrievalCandidate = {
+      document: document, chunk: repository.chunks[0], relevance: 1,
+      matchedPrimaryTerms: [request.queryText], matchedNgrams: [], exactPhraseMatched: true
+    };
+    const candidates: RetrievalCandidate[] = [candidate];
+    return candidates.slice(0, request.topK);
   }
 }
 
-function provider(repository: DocumentRepository, sourceDeviceId: string = 'test-device',
-  retrieval: RetrievalEngine = new KeywordRetrievalEngine()):
+class ThrowingRetrievalEngine implements RetrievalEngine {
+  private readonly failureKind: 'storage' | 'unknown';
+
+  constructor(failureKind: 'storage' | 'unknown') { this.failureKind = failureKind; }
+
+  mode(): 'keyword' { return 'keyword'; }
+
+  async search(request: KnowledgeRetrievalRequest): Promise<RetrievalCandidate[]> {
+    if (request.topK > 0 && this.failureKind === 'storage') {
+      throw new KnowledgeError('E_STORAGE_FAILED', 'safe storage failure', true);
+    }
+    if (request.topK > 0) throw new Error('SQL file:///private/source stack');
+    return [];
+  }
+}
+
+class ReferenceRetrievalEngine implements RetrievalEngine {
+  private readonly repository: ProviderRepository;
+  private readonly reference = new KeywordRetrievalEngine();
+
+  constructor(repository: ProviderRepository) {
+    this.repository = repository;
+  }
+
+  mode(): 'keyword' { return 'keyword'; }
+
+  async search(request: KnowledgeRetrievalRequest): Promise<RetrievalCandidate[]> {
+    return this.reference.search(request, this.repository.documents, this.repository.chunks);
+  }
+}
+
+function provider(repository: ProviderRepository, sourceDeviceId: string = 'test-device',
+  retrieval?: RetrievalEngine):
   ArkDataLocalKnowledgeService {
+  const actualRetrieval: RetrievalEngine = retrieval ?? new ReferenceRetrievalEngine(repository);
   return new ArkDataLocalKnowledgeService(
-    repository, retrieval, new L1PayloadBuilder(), new L2PayloadBuilder(),
+    repository, actualRetrieval, new L1PayloadBuilder(), new L2PayloadBuilder(),
     new KnowledgeProfileBuilder(), new KnowledgePayloadValidator(), new EvidenceUnitFactory(), sourceDeviceId
   );
 }
@@ -203,6 +243,22 @@ export default function semanticKnowledgeProviderTest(): void {
       expect(retrieval.lastRequest?.privacyLevel).assertEqual('PRIVATE_GROUP');
     });
 
+    it('awaits database retrieval without full document or chunk reads in READY state', 0, async () => {
+      const repository = new ProviderRepository('READY');
+      const retrieval = new RecordingRetrievalEngine();
+      const service = provider(repository, 'test-device', retrieval);
+
+      await service.query({
+        contractVersion: '1.0', requestId: 'database-only-gateway', queryText: 'process scheduling', topK: 1,
+        requestedLevel: 'L2', maxPayloadBytes: 4096
+      });
+      await service.searchEvidence(task());
+
+      expect(repository.listDocumentsCalls).assertEqual(0);
+      expect(repository.listChunksCalls).assertEqual(0);
+      expect(retrieval.lastRequest?.topK).assertEqual(RETRIEVAL_CANDIDATE_LIMIT);
+    });
+
     it('does not prune provider evidence using task budgets or confidence', 0, async () => {
       const request = task();
       request.byteBudget = 1;
@@ -268,6 +324,31 @@ export default function semanticKnowledgeProviderTest(): void {
       expect(unknownError?.message.includes('SQL')).assertFalse();
       expect(unknownError?.message.includes('file:')).assertFalse();
       expect(unknownError?.message.includes('stack')).assertFalse();
+    });
+
+    it('preserves and maps errors thrown by async retrieval for gateway and provider', 0, async () => {
+      const repository = new ProviderRepository('READY');
+      const legacy: LocalKnowledgeQuery = {
+        contractVersion: '1.0', requestId: 'retrieval-error', queryText: 'process', topK: 1,
+        requestedLevel: 'L1', maxPayloadBytes: 1024
+      };
+      const storageEngine = new ThrowingRetrievalEngine('storage');
+      const unknownEngine = new ThrowingRetrievalEngine('unknown');
+      const storageService = provider(repository, 'test-device', storageEngine);
+      const unknownService = provider(repository, 'test-device', unknownEngine);
+      const storageGateway = await capturedError(async (): Promise<void> => { await storageService.query(legacy); });
+      const storageProvider = await capturedError(async (): Promise<void> => {
+        await storageService.searchEvidence(task());
+      });
+      const unknownGateway = await capturedError(async (): Promise<void> => { await unknownService.query(legacy); });
+      const unknownProvider = await capturedError(async (): Promise<void> => {
+        await unknownService.searchEvidence(task());
+      });
+      expect(storageGateway?.code).assertEqual('E_STORAGE_FAILED');
+      expect(storageProvider?.code).assertEqual('E_STORAGE_FAILED');
+      expect(unknownGateway?.code).assertEqual('E_RETRIEVAL_FAILED');
+      expect(unknownProvider?.code).assertEqual('E_RETRIEVAL_FAILED');
+      expect(unknownProvider?.message.includes('SQL')).assertFalse();
     });
 
     it('returns an empty list when retrieval has no match', 0, async () => {

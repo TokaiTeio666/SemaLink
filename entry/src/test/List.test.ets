@@ -17,6 +17,7 @@ import userDocumentStabilityTest from './UserDocumentStability.test';
 import localRetrievalBenchmarkTest from './LocalRetrievalBenchmark.test';
 import localRetrievalFullBenchmarkTest from './LocalRetrievalFullBenchmark.test';
 import semanticContractTest from './SemanticContract.test';
+import semanticModelsTest from './SemanticModels.test';
 import knowledgeDocumentPrivacyTest from './KnowledgeDocumentPrivacy.test';
 import knowledgeDatabaseMigrationTest from './KnowledgeDatabaseMigration.test';
 import knowledgeImportPrivacyTest from './KnowledgeImportPrivacy.test';
@@ -51,6 +52,7 @@ export default function testsuite(): void {
   localRetrievalBenchmarkTest();
   localRetrievalFullBenchmarkTest();
   semanticContractTest();
+  semanticModelsTest();
   knowledgeDocumentPrivacyTest();
   knowledgeDatabaseMigrationTest();
   knowledgeImportPrivacyTest();

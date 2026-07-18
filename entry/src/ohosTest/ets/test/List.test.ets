@@ -4,8 +4,9 @@ import indexPageTest from './IndexPage.test';
 import knowledgeDatabaseTest from './KnowledgeDatabase.test';
 import deviceLocalRetrievalBenchmarkTest from './DeviceLocalRetrievalBenchmark.test';
 import semanticKnowledgeProviderDeviceTest from './SemanticKnowledgeProvider.test';
-import rdbSearchCapabilityProbeTest from './RdbSearchCapabilityProbe.test';
 import rdbCandidateSearchTest from './RdbCandidateSearch.test';
+import knowledgeDatabaseIndexTest from './KnowledgeDatabaseIndex.test';
+import rdbDocumentRepositoryTransactionTest from './RdbDocumentRepositoryTransaction.test';
 
 export default function testsuite() {
   abilityTest();
@@ -14,6 +15,7 @@ export default function testsuite() {
   knowledgeDatabaseTest();
   deviceLocalRetrievalBenchmarkTest();
   semanticKnowledgeProviderDeviceTest();
-  rdbSearchCapabilityProbeTest();
   rdbCandidateSearchTest();
+  knowledgeDatabaseIndexTest();
+  rdbDocumentRepositoryTransactionTest();
 }

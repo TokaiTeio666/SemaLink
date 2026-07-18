@@ -24,8 +24,6 @@ export interface KnowledgeMetadata {
 export interface DocumentRepository {
   saveDocumentWithChunks(document: KnowledgeDocument, chunks: DocumentChunk[]): Promise<void>;
   hasChecksum(checksum: string): Promise<boolean>;
-  listDocuments(): Promise<KnowledgeDocument[]>;
-  listChunks(): Promise<DocumentChunk[]>;
   clearAll(): Promise<void>;
   getStatistics(): Promise<RepositoryStatistics>;
   getMetadata(): Promise<KnowledgeMetadata>;

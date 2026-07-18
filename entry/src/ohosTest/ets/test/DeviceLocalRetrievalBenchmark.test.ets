@@ -1,10 +1,22 @@
 import { describe, expect, it } from '@ohos/hypium';
 import { abilityDelegatorRegistry } from '@kit.TestKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { Context } from '@kit.AbilityKit';
 import { LocalKnowledgeQuery, KnowledgePayloadLevel } from '../../../main/ets/contracts/knowledge/KnowledgeModels';
+import { LocalKnowledgeGateway } from '../../../main/ets/contracts/knowledge/LocalKnowledgeGateway';
 import { L1KnowledgePayload, L2KnowledgePayload } from '../../../main/ets/contracts/knowledge/KnowledgePayloadSchemas';
-import { KnowledgeCompositionRoot } from '../../../main/ets/application/KnowledgeCompositionRoot';
+import { KnowledgePayloadValidator } from '../../../main/ets/contracts/knowledge/KnowledgePayloadValidator';
+import { EvidenceUnitFactory } from '../../../main/ets/knowledge/evidence/EvidenceUnitFactory';
+import { DocumentChunker } from '../../../main/ets/knowledge/import/DocumentChunker';
+import { RawFileDocumentImporter } from '../../../main/ets/knowledge/import/RawFileDocumentImporter';
+import { L1PayloadBuilder } from '../../../main/ets/knowledge/payload/L1PayloadBuilder';
+import { L2PayloadBuilder } from '../../../main/ets/knowledge/payload/L2PayloadBuilder';
+import { KnowledgeProfileBuilder } from '../../../main/ets/knowledge/profile/KnowledgeProfileBuilder';
+import { RdbKeywordRetrievalEngine } from '../../../main/ets/knowledge/retrieval/RdbKeywordRetrievalEngine';
+import { ArkDataLocalKnowledgeService } from '../../../main/ets/knowledge/service/ArkDataLocalKnowledgeService';
+import { KnowledgeDatabase } from '../../../main/ets/knowledge/storage/KnowledgeDatabase';
 import { RdbDocumentRepository } from '../../../main/ets/knowledge/storage/RdbDocumentRepository';
+import { CountingCandidateSearch } from './support/CountingCandidateSearch';
 import {
   ANSWERABLE_BENCHMARK_QUERIES,
   AnswerableBenchmarkQuery,
@@ -83,11 +95,35 @@ function splitCount(split: BenchmarkSplit, development: SplitBenchmarkCount,
   return split === 'development' ? development : holdout;
 }
 
+interface CountingKnowledgeComponents {
+  database: KnowledgeDatabase;
+  repository: RdbDocumentRepository;
+  importer: RawFileDocumentImporter;
+  gateway: LocalKnowledgeGateway;
+  countingSearch: CountingCandidateSearch;
+}
+
+async function createCountingKnowledgeComponents(context: Context): Promise<CountingKnowledgeComponents> {
+  const database = new KnowledgeDatabase();
+  await database.initialize(context);
+  const repository = new RdbDocumentRepository(database);
+  const countingSearch = new CountingCandidateSearch(repository);
+  const retrieval = new RdbKeywordRetrievalEngine(countingSearch);
+  const service = new ArkDataLocalKnowledgeService(
+    repository, retrieval, new L1PayloadBuilder(), new L2PayloadBuilder(), new KnowledgeProfileBuilder(),
+    new KnowledgePayloadValidator(), new EvidenceUnitFactory(), 'local-device');
+  return {
+    database: database, repository: repository,
+    importer: new RawFileDocumentImporter(context.resourceManager, repository, new DocumentChunker()),
+    gateway: service, countingSearch: countingSearch
+  };
+}
+
 export default function deviceLocalRetrievalBenchmarkTest() {
   describe('DeviceLocalRetrievalBenchmark', () => {
     it('measures real ArkData gateway L1 and L2 retrieval', 0, async () => {
       const ability = await abilityDelegatorRegistry.getAbilityDelegator().getCurrentTopAbility();
-      const components = await KnowledgeCompositionRoot.create(ability.context);
+      const components = await createCountingKnowledgeComponents(ability.context);
       await components.repository.clearAll();
       try {
         const imported = await components.importer.importBuiltInDocuments();
@@ -104,19 +140,8 @@ export default function deviceLocalRetrievalBenchmarkTest() {
             const warmL1Correct = containsExpectedDocument(warmL1.payloadJson, 'L1', query.expectedDocumentId);
             const warmL2Correct = containsExpectedDocument(warmL2.payloadJson, 'L2', query.expectedDocumentId);
             if (!warmL1Correct || !warmL2Correct) {
-              const diagnosticCandidates = await (components.repository as RdbDocumentRepository).searchCandidates({
-                queryText: query.text, topK: 5, privacyLevel: 'LOCAL_ONLY'
-              });
-              let expectedRank = 0;
-              for (let candidateIndex = 0; candidateIndex < diagnosticCandidates.length; candidateIndex++) {
-                if (diagnosticCandidates[candidateIndex].document.documentId === query.expectedDocumentId) {
-                  expectedRank = candidateIndex + 1;
-                  break;
-                }
-              }
               hilog.error(0x0000, 'SemaLinkBench',
-                'DEVICE_CORRECTNESS_FAILURE queryIndex=%{public}d expectedRank=%{public}d candidates=%{public}d ' +
-                'l1=%{public}s l2=%{public}s', queryIndex, expectedRank, diagnosticCandidates.length,
+                'DEVICE_CORRECTNESS_FAILURE queryIndex=%{public}d l1=%{public}s l2=%{public}s', queryIndex,
                 warmL1Correct.toString(), warmL2Correct.toString());
             }
             expect(warmL1Correct).assertTrue();
@@ -144,18 +169,20 @@ export default function deviceLocalRetrievalBenchmarkTest() {
         expect(l1P95 <= 200).assertTrue();
         expect(l2P95 <= 300).assertTrue();
       } finally {
-        await components.repository.clearAll();
+        try {
+          await components.repository.clearAll();
+        } finally {
+          components.database.close();
+        }
       }
     });
 
     it('meets the full fixed ranking and rejection gates through real database retrieval', 0, async () => {
       const ability = await abilityDelegatorRegistry.getAbilityDelegator().getCurrentTopAbility();
-      const components = await KnowledgeCompositionRoot.create(ability.context);
+      const components = await createCountingKnowledgeComponents(ability.context);
       await components.repository.clearAll();
       try {
         await components.importer.importBuiltInDocuments();
-        const repository = components.repository as RdbDocumentRepository;
-        repository.resetSearchDiagnostics();
         const development = emptySplitCount();
         const holdout = emptySplitCount();
         const latencies: number[] = [];
@@ -178,7 +205,6 @@ export default function deviceLocalRetrievalBenchmarkTest() {
           count.noAnswer += 1;
           if (result.itemCount === 0) count.rejected += 1;
         }
-        const diagnostics = repository.getSearchDiagnostics();
         const devTop1 = development.top1 / development.answerable;
         const devTop5 = development.top5 / development.answerable;
         const holdoutTop1 = holdout.top1 / holdout.answerable;
@@ -189,11 +215,12 @@ export default function deviceLocalRetrievalBenchmarkTest() {
         const p95 = percentile(latencies, 0.95);
         hilog.info(0x0000, 'SemaLinkBench',
           'RDB_FULL devTop1=%{public}d devTop5=%{public}d holdoutTop1=%{public}d holdoutTop5=%{public}d ' +
-          'devReject=%{public}d holdoutReject=%{public}d p50=%{public}d p95=%{public}d rows=%{public}d fullReads=%{public}d',
+          'devReject=%{public}d holdoutReject=%{public}d p50=%{public}d p95=%{public}d ' +
+          'searchCalls=%{public}d rows=%{public}d',
           Math.round(devTop1 * 10000), Math.round(devTop5 * 10000), Math.round(holdoutTop1 * 10000),
           Math.round(holdoutTop5 * 10000), Math.round(devRejection * 10000),
-          Math.round(holdoutRejection * 10000), p50, p95, diagnostics.candidateRowsReturned,
-          diagnostics.fullReadCallsDuringSearch);
+          Math.round(holdoutRejection * 10000), p50, p95,
+          components.countingSearch.searchCalls, components.countingSearch.totalRowsReturned);
         expect(devTop1 >= 0.90).assertTrue();
         expect(devTop5).assertEqual(1);
         expect(holdoutTop1 >= 0.70).assertTrue();
@@ -201,12 +228,14 @@ export default function deviceLocalRetrievalBenchmarkTest() {
         expect(devRejection).assertEqual(1);
         expect(holdoutRejection).assertEqual(1);
         expect(p95 <= 150).assertTrue();
-        expect(diagnostics.fullReadCallsDuringSearch).assertEqual(0);
-        expect(diagnostics.searchCalls).assertEqual(
+        expect(components.countingSearch.searchCalls).assertEqual(
           ANSWERABLE_BENCHMARK_QUERIES.length + NO_ANSWER_BENCHMARK_QUERIES.length);
       } finally {
-        await components.repository.clearAll();
-        components.database.close();
+        try {
+          await components.repository.clearAll();
+        } finally {
+          components.database.close();
+        }
       }
     });
   });

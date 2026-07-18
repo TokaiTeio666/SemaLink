@@ -13,6 +13,7 @@ import {
   L2KnowledgeItem,
   L2KnowledgePayload
 } from './KnowledgePayloadSchemas';
+import { isSafeKnowledgeFilterValue } from './KnowledgeFilterValueValidator';
 
 const MIN_PAYLOAD_BYTES: number = 1024;
 const MAX_PAYLOAD_BYTES: number = 262144;
@@ -42,29 +43,48 @@ function hasDuplicate(values: string[]): boolean {
 }
 
 function validateFilters(filters: KnowledgeQueryFilters): void {
-  if (filters.documentIds !== undefined && filters.documentIds.length > 100) {
-    invalid('E_FILTER_INVALID', 'documentIds must contain at most 100 items');
+  if (typeof filters !== 'object' || filters === null || Array.isArray(filters)) {
+    invalid('E_FILTER_INVALID', 'Knowledge query filters are invalid');
+  }
+  if (filters.documentIds !== undefined) {
+    if (!Array.isArray(filters.documentIds) || filters.documentIds.length > 100) {
+      invalid('E_FILTER_INVALID', 'documentIds must contain at most 100 items');
+    }
+    for (const documentId of filters.documentIds) {
+      if (typeof documentId !== 'string' || documentId.length > 200 ||
+        !isSafeKnowledgeFilterValue(documentId)) {
+        invalid('E_FILTER_INVALID', 'documentId is invalid');
+      }
+    }
+    if (hasDuplicate(filters.documentIds)) {
+      invalid('E_FILTER_INVALID', 'documentIds must not contain duplicates');
+    }
   }
   if (filters.tags !== undefined) {
-    if (filters.tags.length > 20) {
+    if (!Array.isArray(filters.tags) || filters.tags.length > 20) {
       invalid('E_FILTER_INVALID', 'tags must contain at most 20 items');
     }
     for (const tag of filters.tags) {
-      const length = tag.trim().length;
-      if (length < 1 || length > 64) {
+      if (typeof tag !== 'string' || tag.length > 64 || !isSafeKnowledgeFilterValue(tag)) {
         invalid('E_FILTER_INVALID', 'tag length is invalid');
       }
     }
+    if (hasDuplicate(filters.tags)) {
+      invalid('E_FILTER_INVALID', 'tags must not contain duplicates');
+    }
   }
   if (filters.modalities !== undefined) {
-    const values: string[] = filters.modalities;
-    if (hasDuplicate(values)) {
-      invalid('E_FILTER_INVALID', 'modalities must not contain duplicates');
+    if (!Array.isArray(filters.modalities) || filters.modalities.length > 4) {
+      invalid('E_FILTER_INVALID', 'modalities must contain at most 4 items');
     }
+    const values: string[] = filters.modalities;
     for (const modality of filters.modalities) {
-      if (!isSupportedModality(modality)) {
+      if (typeof modality !== 'string' || !isSupportedModality(modality)) {
         invalid('E_FILTER_INVALID', 'modality is unsupported');
       }
+    }
+    if (hasDuplicate(values)) {
+      invalid('E_FILTER_INVALID', 'modalities must not contain duplicates');
     }
   }
   if (filters.updatedAfter !== undefined &&
@@ -78,6 +98,10 @@ function isSupportedModality(modality: KnowledgeModality): boolean {
 }
 
 export function validateKnowledgeRequest(request: LocalKnowledgeQuery): void {
+  if (typeof request !== 'object' || request === null || Array.isArray(request) ||
+    typeof request.queryText !== 'string' || typeof request.requestId !== 'string') {
+    invalid('E_QUERY_INVALID', 'Knowledge request is invalid');
+  }
   if (request.contractVersion !== '1.0') {
     invalid('E_CONTRACT_VERSION_UNSUPPORTED', 'Unsupported knowledge contract version');
   }

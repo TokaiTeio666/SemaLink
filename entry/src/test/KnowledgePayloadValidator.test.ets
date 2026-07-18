@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@ohos/hypium';
 import { KnowledgeError } from '../main/ets/contracts/knowledge/KnowledgeError';
 import {
+  KnowledgeQueryFilters,
   LocalKnowledgeQuery,
   LocalKnowledgeResult,
   KnowledgeProfile
@@ -20,6 +21,10 @@ function validQuery(): LocalKnowledgeQuery {
     requestedLevel: 'L1',
     maxPayloadBytes: 4096
   };
+}
+
+interface RuntimeRequestHolder {
+  request?: LocalKnowledgeQuery;
 }
 
 function validResult(): LocalKnowledgeResult {
@@ -61,6 +66,23 @@ function expectCode(action: () => void, code: string): void {
   expect(actual).assertEqual(code);
 }
 
+function expectSafeCode(action: () => void, code: string): void {
+  let actual = '';
+  let message = '';
+  try {
+    action();
+  } catch (error) {
+    if (error instanceof KnowledgeError) {
+      actual = error.code;
+      message = error.message;
+    }
+  }
+  expect(actual).assertEqual(code);
+  expect(message.includes('runtime-secret')).assertFalse();
+  expect(message.includes('SELECT ')).assertFalse();
+  expect(message.includes('\n    at ')).assertFalse();
+}
+
 export default function knowledgePayloadValidatorTest() {
   describe('KnowledgePayloadValidator', () => {
     it('accepts request boundary values', 0, () => {
@@ -93,6 +115,59 @@ export default function knowledgePayloadValidatorTest() {
       expectCode((): void => validateKnowledgeRequest(budget), 'E_PAYLOAD_BUDGET_INVALID');
     });
 
+    it('rejects malformed legacy request roots without leaking runtime errors', 0, () => {
+      const holder: RuntimeRequestHolder = {};
+      const malformedRequests: LocalKnowledgeQuery[] = [
+        JSON.parse('null') as LocalKnowledgeQuery,
+        holder.request!,
+        JSON.parse('{}') as LocalKnowledgeQuery
+      ];
+      for (const malformedRequest of malformedRequests) {
+        expectSafeCode((): void => validateKnowledgeRequest(malformedRequest), 'E_QUERY_INVALID');
+      }
+    });
+
+    it('rejects malformed legacy filter containers and arrays safely', 0, () => {
+      const malformedFilters: KnowledgeQueryFilters[] = [
+        JSON.parse('null') as KnowledgeQueryFilters,
+        JSON.parse('[]') as KnowledgeQueryFilters,
+        JSON.parse('{"documentIds":"runtime-secret"}') as KnowledgeQueryFilters,
+        JSON.parse('{"tags":"runtime-secret"}') as KnowledgeQueryFilters,
+        JSON.parse('{"modalities":"runtime-secret"}') as KnowledgeQueryFilters,
+        JSON.parse('{"documentIds":[1]}') as KnowledgeQueryFilters,
+        JSON.parse('{"tags":[1]}') as KnowledgeQueryFilters,
+        JSON.parse('{"modalities":[1]}') as KnowledgeQueryFilters
+      ];
+      for (const malformedFilter of malformedFilters) {
+        const query = validQuery();
+        query.filters = malformedFilter;
+        expectSafeCode((): void => validateKnowledgeRequest(query), 'E_FILTER_INVALID');
+      }
+    });
+
+    it('enforces legacy filter count length uniqueness and timestamp bounds', 0, () => {
+      const invalidFilters: KnowledgeQueryFilters[] = [];
+      const documentIds: string[] = [];
+      for (let index = 0; index < 101; index++) documentIds.push('doc-' + index.toString());
+      invalidFilters.push({ documentIds: documentIds });
+      invalidFilters.push({ documentIds: ['x'.repeat(201)] });
+      invalidFilters.push({ documentIds: ['doc-1', 'doc-1'] });
+      const tags: string[] = [];
+      for (let index = 0; index < 21; index++) tags.push('tag-' + index.toString());
+      invalidFilters.push({ tags: tags });
+      invalidFilters.push({ tags: ['x'.repeat(65)] });
+      invalidFilters.push({ tags: ['tag-1', 'tag-1'] });
+      invalidFilters.push({ modalities: ['text', 'pdf', 'image', 'ocr_text', 'text'] });
+      invalidFilters.push({ modalities: ['text', 'text'] });
+      invalidFilters.push({ updatedAfter: -1 });
+      invalidFilters.push({ updatedAfter: 1.5 });
+      for (const invalidFilter of invalidFilters) {
+        const query = validQuery();
+        query.filters = invalidFilter;
+        expectCode((): void => validateKnowledgeRequest(query), 'E_FILTER_INVALID');
+      }
+    });
+
     it('rejects unsupported version and invalid filters', 0, () => {
       const version = validQuery();
       version.contractVersion = '2.0' as '1.0';
@@ -100,6 +175,34 @@ export default function knowledgePayloadValidatorTest() {
       const filters = validQuery();
       filters.filters = { tags: ['  '] };
       expectCode((): void => validateKnowledgeRequest(filters), 'E_FILTER_INVALID');
+    });
+
+    it('rejects unsafe storage references and untrimmed filter values', 0, () => {
+      const unsafeValues: string[] = [
+        ' doc-os', 'doc-os ', ' 操作系统 ', 'file:///private/a', 'file:/private/a',
+        'content://provider/id', 'content:provider-id', 'datashare://provider/id',
+        'datashare:provider-id', 'http://example.com', 'https://example.com', 'ftp://example.com',
+        'data:text/plain,test', 'C:\\private\\a', 'C:/private/a', 'C:private\\a', '/data/private/a',
+        '\\\\server\\share\\a', ' file:///private/a '
+      ];
+      for (const value of unsafeValues) {
+        const documentQuery = validQuery();
+        documentQuery.filters = { documentIds: [value] };
+        expectCode((): void => validateKnowledgeRequest(documentQuery), 'E_FILTER_INVALID');
+        const tagQuery = validQuery();
+        tagQuery.filters = { tags: [value] };
+        expectCode((): void => validateKnowledgeRequest(tagQuery), 'E_FILTER_INVALID');
+      }
+    });
+
+    it('accepts plain and business-prefixed filter values', 0, () => {
+      const query = validQuery();
+      query.filters = {
+        documentIds: ['doc-os', 'database', 'database:ACID'],
+        tags: ['操作系统', 'ACID', 'transaction:isolation']
+      };
+      validateKnowledgeRequest(query);
+      expect(true).assertTrue();
     });
 
     it('validates a legal L1 result', 0, () => {

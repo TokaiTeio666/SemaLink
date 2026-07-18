@@ -9,6 +9,8 @@ import { AppStateStore } from '../state/AppStateStore';
 import { KnowledgeError } from '../contracts/knowledge/KnowledgeError';
 import { LocalKnowledgeGateway } from '../contracts/knowledge/LocalKnowledgeGateway';
 import { LocalKnowledgeQuery, LocalKnowledgeResult } from '../contracts/knowledge/KnowledgeModels';
+import { TaskRequest, TaskSufficiencyResult } from '../contracts/semantic/SemanticModels';
+import { ProgressiveQueryCoordinator } from '../communication/ProgressiveQueryCoordinator';
 import { KnowledgePayloadValidator } from '../contracts/knowledge/KnowledgePayloadValidator';
 import { publishKnowledgeResult, resultSummary } from './KnowledgeResultMapper';
 import {
@@ -28,6 +30,7 @@ export class QueryCoordinator implements SessionObserver {
   private readonly knowledgeGateway: LocalKnowledgeGateway;
   private readonly resolverFactory: ResolverFactory;
   private readonly now: Clock;
+  private readonly semanticCoordinator?: ProgressiveQueryCoordinator;
   private destroyed: boolean = false;
 
   constructor(
@@ -35,14 +38,26 @@ export class QueryCoordinator implements SessionObserver {
     store: AppStateStore,
     knowledgeGateway: LocalKnowledgeGateway,
     resolverFactory: ResolverFactory,
-    now: Clock = () => Date.now()
+    now: Clock = () => Date.now(),
+    semanticCoordinator?: ProgressiveQueryCoordinator
   ) {
     this.session = session;
     this.store = store;
     this.knowledgeGateway = knowledgeGateway;
     this.resolverFactory = resolverFactory;
     this.now = now;
+    this.semanticCoordinator = semanticCoordinator;
     this.session.setObserver(this);
+    if (semanticCoordinator !== undefined) {
+      this.session.setProtocolObserver(semanticCoordinator);
+    }
+  }
+
+  async submitSemanticTask(task: TaskRequest): Promise<TaskSufficiencyResult> {
+    if (this.semanticCoordinator === undefined) {
+      throw new AppError('E_SEMANTIC_UNAVAILABLE', 'Semantic coordinator is unavailable', ErrorStage.QUERY, true);
+    }
+    return await this.semanticCoordinator.submit(task);
   }
 
   selectInitiator(): void {
@@ -258,6 +273,9 @@ export class QueryCoordinator implements SessionObserver {
 
   onStateChanged(state: ConnectionState): void {
     this.store.update({ connectionState: state });
+    if (state === ConnectionState.CONNECTED && this.semanticCoordinator !== undefined) {
+      this.semanticCoordinator.publishProfile().catch((_error: Object) => {});
+    }
   }
 
   async onIncomingQuery(envelope: ProtocolEnvelope): Promise<void> {

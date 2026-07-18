@@ -46,6 +46,12 @@ export function canQueryKnowledge(snapshot: AppSnapshot, question: string): bool
     question.trim().length >= 1 && question.length <= 1000;
 }
 
+export function semanticTaskStatus(snapshot: AppSnapshot): string {
+  const feedback: string = snapshot.taskFeedback.length > 0 ? snapshot.taskFeedback : '-';
+  const round: string = snapshot.taskRound > 0 ? ' · R' + snapshot.taskRound.toString() : '';
+  return snapshot.taskPhase + ' · ' + feedback + round;
+}
+
 @Entry
 @Component
 struct Index {
@@ -74,6 +80,7 @@ struct Index {
         this.header()
         this.collaborationSection()
         this.knowledgeSection()
+        this.semanticTaskSection()
         this.roleSelector()
         this.connectionSection()
         if (this.snapshot.role === DeviceRole.RESPONDER) {
@@ -259,6 +266,38 @@ struct Index {
     .width('100%')
     .padding(12)
     .backgroundColor($r('app.color.surface_muted'))
+  }
+
+  @Builder
+  semanticTaskSection() {
+    Column({ space: 10 }) {
+      Text('语义任务状态')
+        .fontSize(19)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+      Text(semanticTaskStatus(this.snapshot))
+        .id('semantic-task-status')
+        .fontSize(14)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+      Row({ space: 8 }) {
+        this.metric('TSF 覆盖率', `${(this.snapshot.taskCoverage * 100).toFixed(0)}%`, 'semantic-task-coverage')
+        this.metric('TSF 置信度', `${(this.snapshot.taskConfidence * 100).toFixed(0)}%`, 'semantic-task-confidence')
+      }
+      .width('100%')
+      Row({ space: 8 }) {
+        this.metric('选中设备', this.snapshot.selectedDeviceId.length > 0 ?
+          this.snapshot.selectedDeviceId : '-', 'semantic-task-device')
+        this.metric('证据字节', `${this.snapshot.evidenceBytes} B`, 'semantic-task-evidence-bytes')
+      }
+      .width('100%')
+    }
+    .id('semantic-task-section')
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding(16)
+    .backgroundColor($r('app.color.surface'))
   }
 
   @Builder

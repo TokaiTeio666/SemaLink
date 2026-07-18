@@ -13,7 +13,7 @@ import {
   sortCollaborationRecords
 } from '../../../main/ets/collaboration/CollaborationModels';
 import { AppStateStore } from '../../../main/ets/state/AppStateStore';
-import { canSubmit, isBusy, shouldShowConnect } from '../../../main/ets/pages/Index';
+import { canSubmit, isBusy, semanticTaskStatus, shouldShowConnect } from '../../../main/ets/pages/Index';
 
 export default function indexPageTest(): void {
   describe('IndexPage', () => {
@@ -61,6 +61,14 @@ export default function indexPageTest(): void {
       const masked = maskDeviceId(fullId);
       expect(masked.includes(fullId)).assertFalse();
       expect(masked.length > 0).assertTrue();
+    });
+
+    it('formatsSemanticTaskStatusFromPhaseAndFeedback', 0, () => {
+      const snapshot = cloneSnapshot(INITIAL_SNAPSHOT, DeviceRole.INITIATOR);
+      expect(semanticTaskStatus(snapshot)).assertEqual('PENDING · -');
+      const evaluating = new AppStateStore();
+      evaluating.update({ taskPhase: 'EVALUATING_L1', taskFeedback: 'NEED_MORE', taskRound: 1 });
+      expect(semanticTaskStatus(evaluating.snapshot())).assertEqual('EVALUATING_L1 · NEED_MORE · R1');
     });
   });
 

@@ -14,6 +14,11 @@ import { LocalKnowledgeGateway } from '../contracts/knowledge/LocalKnowledgeGate
 import { KnowledgeApplicationService } from '../application/KnowledgeApplicationService';
 import { publishKnowledgeResult } from '../application/KnowledgeResultMapper';
 import { KnowledgeError } from '../contracts/knowledge/KnowledgeError';
+import { DeviceDirectory } from '../communication/DeviceDirectory';
+import { DeviceSemanticRouter } from '../communication/DeviceSemanticRouter';
+import { EvidenceUtilityScheduler } from '../communication/EvidenceUtilityScheduler';
+import { TaskSufficiencyEvaluator } from '../communication/TaskSufficiencyEvaluator';
+import { ProgressiveQueryCoordinator } from '../communication/ProgressiveQueryCoordinator';
 import {
   ImportReport,
   KnowledgePayloadLevel,
@@ -37,6 +42,7 @@ export class AppRuntime {
   readonly knowledgeProvider: SemanticKnowledgeProvider;
   readonly knowledgeGateway?: LocalKnowledgeGateway;
   readonly knowledge: KnowledgeApplicationService;
+  readonly semanticCoordinator: ProgressiveQueryCoordinator;
   private readonly ownedKnowledgeService: KnowledgeApplicationService;
   private readonly context: common.UIAbilityContext;
   private knowledgeInitialization?: Promise<void>;
@@ -55,9 +61,6 @@ export class AppRuntime {
     this.ownedKnowledgeService = this.knowledge;
     const resolverFactory: ResolverFactory = dependencies.resolverFactory ??
       (() => new TrustedDeviceResolver(new DistributedDeviceProvider(bundleName)));
-    this.coordinator = new QueryCoordinator(
-      session, this.store, this.knowledge, resolverFactory
-    );
     if (dependencies.knowledgeProvider !== undefined) {
       this.knowledgeProvider = dependencies.knowledgeProvider;
       this.knowledgeGateway = undefined;
@@ -65,6 +68,14 @@ export class AppRuntime {
       this.knowledgeProvider = this.knowledge;
       this.knowledgeGateway = this.knowledge;
     }
+    this.semanticCoordinator = new ProgressiveQueryCoordinator(
+      session, this.store, this.knowledgeProvider, new DeviceDirectory(), new DeviceSemanticRouter(),
+      new EvidenceUtilityScheduler(), new TaskSufficiencyEvaluator()
+    );
+    this.coordinator = new QueryCoordinator(
+      session, this.store, this.knowledgeGateway ?? this.knowledge, resolverFactory,
+      () => Date.now(), this.semanticCoordinator
+    );
   }
 
   initializeKnowledge(): Promise<void>;

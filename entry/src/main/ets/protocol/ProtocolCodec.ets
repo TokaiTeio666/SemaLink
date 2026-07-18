@@ -1,12 +1,33 @@
 import { AppError, ErrorStage } from '../common/AppError';
 import {
   ProtocolEnvelope, ProtocolPayload, MessageType, QueryPayload, QueryAckPayload,
-  ResultPayload, ErrorPayload, PROTOCOL_VERSION, MAX_MESSAGE_BYTES, MAX_QUESTION_CHARS,
-  MAX_SUMMARY_CHARS
+  ResultPayload, ErrorPayload, ProfilePayload, TaskPayload, TaskAckPayload,
+  EvidencePayload, TsfPayload, CancelPayload,
+  PROTOCOL_VERSION, MAX_MESSAGE_BYTES, MAX_QUESTION_CHARS, MAX_SUMMARY_CHARS
 } from './ProtocolModels';
 import { LocalKnowledgeResult } from '../contracts/knowledge/KnowledgeModels';
+import {
+  DeviceProfileAdvertisement,
+  EvidenceUnit,
+  TaskRequest,
+  TaskRequestFilters,
+  TaskSufficiencyResult,
+  validateTaskRequest
+} from '../contracts/semantic/SemanticModels';
 
-const VALID_MESSAGE_TYPES: string[] = ['QUERY', 'QUERY_ACK', 'RESULT', 'ERROR'];
+const VALID_MESSAGE_TYPES: string[] = [
+  'QUERY', 'QUERY_ACK', 'RESULT', 'ERROR',
+  'PROFILE', 'TASK', 'TASK_ACK', 'EVIDENCE', 'TSF', 'CANCEL'
+];
+
+const SEMANTIC_CONTRACT_VERSION: string = '1.0';
+const VALID_EVIDENCE_LEVELS: string[] = ['L1', 'L2'];
+const VALID_PRIVACY_LEVELS: string[] = ['LOCAL_ONLY', 'PRIVATE_GROUP'];
+const VALID_TSF_FEEDBACKS: string[] = ['ENOUGH', 'NEED_MORE', 'ABORT'];
+const VALID_INDEX_STATES: string[] = ['NOT_READY', 'INDEXING', 'READY'];
+const VALID_ACCEPTABLE_LEVELS: string[] = ['L1', 'L2'];
+const VALID_CAN_ESCALATE_LEVELS: string[] = ['L1', 'L2'];
+const VALID_TASK_ROUNDS: number[] = [1, 2];
 
 function countUtf8Bytes(text: string): number {
   let byteCount: number = 0;
@@ -32,6 +53,197 @@ function countUtf8Bytes(text: string): number {
   return byteCount;
 }
 
+function isUnitInterval(value: number): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+function isStringArray(value: Object | undefined): boolean {
+  if (value === undefined || !Array.isArray(value)) {
+    return false;
+  }
+  const arr: Object[] = value as Object[];
+  for (const item of arr) {
+    if (typeof item !== 'string') {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isStringInSet(value: Object | undefined, allowed: string[]): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  for (const candidate of allowed) {
+    if (value === candidate) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isLevelArrayInSet(value: Object | undefined, allowed: string[]): boolean {
+  if (value === undefined || !Array.isArray(value)) {
+    return false;
+  }
+  const arr: Object[] = value as Object[];
+  for (const item of arr) {
+    if (typeof item !== 'string') {
+      return false;
+    }
+    let found: boolean = false;
+    for (const candidate of allowed) {
+      if (item === candidate) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isNonEmptyString(value: Object | undefined): boolean {
+  return typeof value === 'string' && (value as string).length > 0;
+}
+
+function isRoundValid(round: Object | undefined): boolean {
+  if (typeof round !== 'number' || !Number.isInteger(round)) {
+    return false;
+  }
+  return round === 1 || round === 2;
+}
+
+function isRoundValidNumber(round: number): boolean {
+  return Number.isInteger(round) && (round === 1 || round === 2);
+}
+
+function validateTypedEvidenceUnit(unit: EvidenceUnit): void {
+  if (unit.semanticContractVersion !== SEMANTIC_CONTRACT_VERSION) {
+    throw new AppError('E_PROTOCOL_INVALID', 'semanticContractVersion 不一致', ErrorStage.PROTOCOL, false);
+  }
+  if (typeof unit.evidenceId !== 'string' || unit.evidenceId.length === 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'evidenceId 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (typeof unit.evidenceGroupId !== 'string' || unit.evidenceGroupId.length === 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'evidenceGroupId 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (typeof unit.sourceDeviceId !== 'string' || unit.sourceDeviceId.length === 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'sourceDeviceId 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (typeof unit.sourceDocId !== 'string' || unit.sourceDocId.length === 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'sourceDocId 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (unit.level !== 'L1' && unit.level !== 'L2') {
+    throw new AppError('E_PROTOCOL_INVALID', 'level 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (typeof unit.title !== 'string' || unit.title.length === 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'title 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (!isUnitInterval(unit.relevance)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'relevance 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (!Array.isArray(unit.coveredConcepts)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'coveredConcepts 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (!isUnitInterval(unit.estimatedCoverageGain)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'estimatedCoverageGain 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (typeof unit.byteCost !== 'number' || unit.byteCost <= 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'byteCost 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (unit.privacyLevel !== 'LOCAL_ONLY' && unit.privacyLevel !== 'PRIVATE_GROUP') {
+    throw new AppError('E_PROTOCOL_INVALID', 'privacyLevel 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (!isUnitInterval(unit.privacyCost)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'privacyCost 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (!isUnitInterval(unit.energyCost)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'energyCost 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (typeof unit.hash !== 'string' || unit.hash.length === 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'hash 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (!Array.isArray(unit.canEscalateTo)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'canEscalateTo 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  for (const level of unit.canEscalateTo) {
+    if (level !== 'L1' && level !== 'L2') {
+      throw new AppError('E_PROTOCOL_INVALID', 'canEscalateTo 字段无效', ErrorStage.PROTOCOL, false);
+    }
+  }
+}
+
+function validateTypedProfile(profile: DeviceProfileAdvertisement): void {
+  if (profile.semanticContractVersion !== SEMANTIC_CONTRACT_VERSION) {
+    throw new AppError('E_PROTOCOL_INVALID', 'semanticContractVersion 不一致', ErrorStage.PROTOCOL, false);
+  }
+  if (typeof profile.deviceId !== 'string' || profile.deviceId.length === 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'deviceId 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (typeof profile.deviceAlias !== 'string' || profile.deviceAlias.length === 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'deviceAlias 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (typeof profile.profileVersion !== 'string' || profile.profileVersion.length === 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'profileVersion 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (typeof profile.indexVersion !== 'string' || profile.indexVersion.length === 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'indexVersion 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (profile.indexState !== 'NOT_READY' && profile.indexState !== 'INDEXING' && profile.indexState !== 'READY') {
+    throw new AppError('E_PROTOCOL_INVALID', 'indexState 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (!Array.isArray(profile.knowledgeDomains)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'knowledgeDomains 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (!Array.isArray(profile.modalities)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'modalities 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (!Array.isArray(profile.retrievalModes)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'retrievalModes 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (!Array.isArray(profile.supportedLevels) || profile.supportedLevels.length === 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'supportedLevels 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  for (const level of profile.supportedLevels) {
+    if (level !== 'L1' && level !== 'L2') {
+      throw new AppError('E_PROTOCOL_INVALID', 'supportedLevels 字段无效', ErrorStage.PROTOCOL, false);
+    }
+  }
+  if (typeof profile.advertisedAtMs !== 'number' || !Number.isFinite(profile.advertisedAtMs)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'advertisedAtMs 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (typeof profile.ttlMs !== 'number' || profile.ttlMs <= 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'ttlMs 字段无效', ErrorStage.PROTOCOL, false);
+  }
+}
+
+function validateTypedTsfResult(result: TaskSufficiencyResult): void {
+  if (result.feedback !== 'ENOUGH' && result.feedback !== 'NEED_MORE' && result.feedback !== 'ABORT') {
+    throw new AppError('E_PROTOCOL_INVALID', 'feedback 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (!isUnitInterval(result.coverage)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'coverage 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (!isUnitInterval(result.confidence)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'confidence 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (!isUnitInterval(result.diversity)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'diversity 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (!Array.isArray(result.coveredConcepts)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'coveredConcepts 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (!Array.isArray(result.missingConcepts)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'missingConcepts 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (!Array.isArray(result.acceptedEvidenceIds)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'acceptedEvidenceIds 字段无效', ErrorStage.PROTOCOL, false);
+  }
+}
+
 function checkRequiredFields(raw: Record<string, Object>): void {
   // ArkTS doesn't support 'in' operator; check each field individually via typeof
   if (raw['version'] === undefined) {
@@ -55,6 +267,272 @@ function checkRequiredFields(raw: Record<string, Object>): void {
   if (raw['payload'] === undefined) {
     throw new AppError('E_PROTOCOL_INVALID', '缺少必要字段: payload', ErrorStage.PROTOCOL, false);
   }
+}
+
+function requireString(raw: Record<string, Object>, field: string): string {
+  if (typeof raw[field] !== 'string') {
+    throw new AppError('E_PROTOCOL_INVALID', field + ' 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  return raw[field] as string;
+}
+
+function requireNonEmptyString(raw: Record<string, Object>, field: string): string {
+  if (!isNonEmptyString(raw[field])) {
+    throw new AppError('E_PROTOCOL_INVALID', field + ' 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  return raw[field] as string;
+}
+
+function requireNumber(raw: Record<string, Object>, field: string): number {
+  if (typeof raw[field] !== 'number' || !Number.isFinite(raw[field] as number)) {
+    throw new AppError('E_PROTOCOL_INVALID', field + ' 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  return raw[field] as number;
+}
+
+function requireUnitInterval(raw: Record<string, Object>, field: string): number {
+  const value: number = requireNumber(raw, field);
+  if (!isUnitInterval(value)) {
+    throw new AppError('E_PROTOCOL_INVALID', field + ' 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  return value;
+}
+
+function requireStringArray(raw: Record<string, Object>, field: string): string[] {
+  if (!isStringArray(raw[field])) {
+    throw new AppError('E_PROTOCOL_INVALID', field + ' 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  return raw[field] as string[];
+}
+
+function requireLevelArrayInSet(raw: Record<string, Object>, field: string, allowed: string[]): string[] {
+  if (!isLevelArrayInSet(raw[field], allowed)) {
+    throw new AppError('E_PROTOCOL_INVALID', field + ' 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  return raw[field] as string[];
+}
+
+function requireStringInSet(raw: Record<string, Object>, field: string, allowed: string[]): string {
+  if (!isStringInSet(raw[field], allowed)) {
+    throw new AppError('E_PROTOCOL_INVALID', field + ' 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  return raw[field] as string;
+}
+
+function requireRound(raw: Record<string, Object>, field: string): number {
+  const value: Object | undefined = raw[field];
+  if (typeof value !== 'number' || !Number.isInteger(value) ||
+    (value !== 1 && value !== 2)) {
+    throw new AppError('E_PROTOCOL_INVALID', field + ' 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  return value;
+}
+
+function optionalString(raw: Record<string, Object>, field: string): string | undefined {
+  if (raw[field] === undefined) {
+    return undefined;
+  }
+  if (typeof raw[field] !== 'string') {
+    throw new AppError('E_PROTOCOL_INVALID', field + ' 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  return raw[field] as string;
+}
+
+function validateEvidenceUnit(raw: Record<string, Object>): EvidenceUnit {
+  const semanticContractVersion: string = requireString(raw, 'semanticContractVersion');
+  if (semanticContractVersion !== SEMANTIC_CONTRACT_VERSION) {
+    throw new AppError('E_PROTOCOL_INVALID', 'semanticContractVersion 不一致', ErrorStage.PROTOCOL, false);
+  }
+  const evidenceId: string = requireNonEmptyString(raw, 'evidenceId');
+  const evidenceGroupId: string = requireNonEmptyString(raw, 'evidenceGroupId');
+  const sourceDeviceId: string = requireNonEmptyString(raw, 'sourceDeviceId');
+  const sourceDocId: string = requireNonEmptyString(raw, 'sourceDocId');
+  const sourceChunkId: string | undefined = optionalString(raw, 'sourceChunkId');
+  const parentEvidenceId: string | undefined = optionalString(raw, 'parentEvidenceId');
+  const level: string = requireStringInSet(raw, 'level', VALID_EVIDENCE_LEVELS);
+  const title: string = requireNonEmptyString(raw, 'title');
+  const summary: string | undefined = optionalString(raw, 'summary');
+  const snippet: string | undefined = optionalString(raw, 'snippet');
+  const relevance: number = requireUnitInterval(raw, 'relevance');
+  const coveredConcepts: string[] = requireStringArray(raw, 'coveredConcepts');
+  const estimatedCoverageGain: number = requireUnitInterval(raw, 'estimatedCoverageGain');
+  const byteCost: number = requireNumber(raw, 'byteCost');
+  if (byteCost <= 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'byteCost 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  const privacyLevel: string = requireStringInSet(raw, 'privacyLevel', VALID_PRIVACY_LEVELS);
+  const privacyCost: number = requireUnitInterval(raw, 'privacyCost');
+  const energyCost: number = requireUnitInterval(raw, 'energyCost');
+  const hash: string = requireNonEmptyString(raw, 'hash');
+  const canEscalateTo: string[] = requireLevelArrayInSet(raw, 'canEscalateTo', VALID_CAN_ESCALATE_LEVELS);
+  const evidence: EvidenceUnit = {
+    semanticContractVersion: '1.0',
+    evidenceId: evidenceId,
+    evidenceGroupId: evidenceGroupId,
+    sourceDeviceId: sourceDeviceId,
+    sourceDocId: sourceDocId,
+    level: level as 'L1' | 'L2',
+    title: title,
+    relevance: relevance,
+    coveredConcepts: coveredConcepts,
+    estimatedCoverageGain: estimatedCoverageGain,
+    byteCost: byteCost,
+    privacyLevel: privacyLevel as 'LOCAL_ONLY' | 'PRIVATE_GROUP',
+    privacyCost: privacyCost,
+    energyCost: energyCost,
+    hash: hash,
+    canEscalateTo: canEscalateTo as ('L1' | 'L2')[]
+  };
+  if (sourceChunkId !== undefined) {
+    evidence.sourceChunkId = sourceChunkId;
+  }
+  if (parentEvidenceId !== undefined) {
+    evidence.parentEvidenceId = parentEvidenceId;
+  }
+  if (summary !== undefined) {
+    evidence.summary = summary;
+  }
+  if (snippet !== undefined) {
+    evidence.snippet = snippet;
+  }
+  return evidence;
+}
+
+function validateDeviceProfileAdvertisement(raw: Record<string, Object>): DeviceProfileAdvertisement {
+  const semanticContractVersion: string = requireString(raw, 'semanticContractVersion');
+  if (semanticContractVersion !== SEMANTIC_CONTRACT_VERSION) {
+    throw new AppError('E_PROTOCOL_INVALID', 'semanticContractVersion 不一致', ErrorStage.PROTOCOL, false);
+  }
+  const deviceId: string = requireNonEmptyString(raw, 'deviceId');
+  const deviceAlias: string = requireNonEmptyString(raw, 'deviceAlias');
+  const profileVersion: string = requireNonEmptyString(raw, 'profileVersion');
+  const indexVersion: string = requireNonEmptyString(raw, 'indexVersion');
+  const indexState: string = requireStringInSet(raw, 'indexState', VALID_INDEX_STATES);
+  const knowledgeDomains: string[] = requireStringArray(raw, 'knowledgeDomains');
+  const modalities: string[] = requireStringArray(raw, 'modalities');
+  const retrievalModes: string[] = requireStringArray(raw, 'retrievalModes');
+  const supportedLevels: string[] = requireLevelArrayInSet(raw, 'supportedLevels', VALID_ACCEPTABLE_LEVELS);
+  const advertisedAtMs: number = requireNumber(raw, 'advertisedAtMs');
+  const ttlMs: number = requireNumber(raw, 'ttlMs');
+  if (ttlMs <= 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'ttlMs 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  return {
+    semanticContractVersion: '1.0',
+    deviceId: deviceId,
+    deviceAlias: deviceAlias,
+    profileVersion: profileVersion,
+    indexVersion: indexVersion,
+    indexState: indexState as 'NOT_READY' | 'INDEXING' | 'READY',
+    knowledgeDomains: knowledgeDomains,
+    modalities: modalities,
+    retrievalModes: retrievalModes,
+    supportedLevels: supportedLevels as ('L1' | 'L2')[],
+    advertisedAtMs: advertisedAtMs,
+    ttlMs: ttlMs
+  };
+}
+
+function validateTaskRequestFromRaw(raw: Record<string, Object>): TaskRequest {
+  const semanticContractVersion: string = requireString(raw, 'semanticContractVersion');
+  if (semanticContractVersion !== SEMANTIC_CONTRACT_VERSION) {
+    throw new AppError('E_PROTOCOL_INVALID', 'semanticContractVersion 不一致', ErrorStage.PROTOCOL, false);
+  }
+  const taskId: string = requireNonEmptyString(raw, 'taskId');
+  const queryText: string = requireNonEmptyString(raw, 'queryText');
+  const requiredConcepts: string[] = requireStringArray(raw, 'requiredConcepts');
+  for (const concept of requiredConcepts) {
+    if (concept.trim().length === 0) {
+      throw new AppError('E_PROTOCOL_INVALID', 'requiredConcepts 字段无效', ErrorStage.PROTOCOL, false);
+    }
+  }
+  const requiredConfidence: number = requireUnitInterval(raw, 'requiredConfidence');
+  const coverageThreshold: number = requireUnitInterval(raw, 'coverageThreshold');
+  const latencyBudgetMs: number = requireNumber(raw, 'latencyBudgetMs');
+  if (!Number.isInteger(latencyBudgetMs) || latencyBudgetMs <= 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'latencyBudgetMs 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  const byteBudget: number = requireNumber(raw, 'byteBudget');
+  if (!Number.isInteger(byteBudget) || byteBudget <= 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'byteBudget 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  const privacyLevel: string = requireStringInSet(raw, 'privacyLevel', VALID_PRIVACY_LEVELS);
+  const acceptableLevels: string[] = requireLevelArrayInSet(raw, 'acceptableLevels', VALID_ACCEPTABLE_LEVELS);
+  if (acceptableLevels.length === 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'acceptableLevels 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  const task: TaskRequest = {
+    semanticContractVersion: '1.0',
+    taskId: taskId,
+    queryText: queryText,
+    requiredConcepts: requiredConcepts,
+    requiredConfidence: requiredConfidence,
+    coverageThreshold: coverageThreshold,
+    latencyBudgetMs: latencyBudgetMs,
+    byteBudget: byteBudget,
+    privacyLevel: privacyLevel as 'LOCAL_ONLY' | 'PRIVATE_GROUP',
+    acceptableLevels: acceptableLevels as ('L1' | 'L2')[]
+  };
+  // Reuse shared semantic contract validator for additional consistency (e.g. filter validation).
+  // It throws KnowledgeError; we rethrow as AppError to keep the codec's error surface uniform.
+  try {
+    validateTaskRequest(task);
+  } catch (_e) {
+    throw new AppError('E_PROTOCOL_INVALID', 'task 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  if (raw['filters'] !== undefined) {
+    const filtersRaw: Object | undefined = raw['filters'];
+    if (filtersRaw === undefined || typeof filtersRaw !== 'object' ||
+      filtersRaw === null || Array.isArray(filtersRaw)) {
+      throw new AppError('E_PROTOCOL_INVALID', 'filters 字段无效', ErrorStage.PROTOCOL, false);
+    }
+    // validateTaskRequest already covers filter validation when present; we accept the filters object as-is.
+    task.filters = filtersRaw as TaskRequestFilters;
+  }
+  return task;
+}
+
+function validateTaskSufficiencyResultFromRaw(raw: Record<string, Object>): TaskSufficiencyResult {
+  const feedback: string = requireStringInSet(raw, 'feedback', VALID_TSF_FEEDBACKS);
+  const coverage: number = requireUnitInterval(raw, 'coverage');
+  const confidence: number = requireUnitInterval(raw, 'confidence');
+  const diversity: number = requireUnitInterval(raw, 'diversity');
+  const coveredConcepts: string[] = requireStringArray(raw, 'coveredConcepts');
+  const missingConcepts: string[] = requireStringArray(raw, 'missingConcepts');
+  const acceptedEvidenceIds: string[] = requireStringArray(raw, 'acceptedEvidenceIds');
+  return {
+    feedback: feedback as 'ENOUGH' | 'NEED_MORE' | 'ABORT',
+    coverage: coverage,
+    confidence: confidence,
+    diversity: diversity,
+    coveredConcepts: coveredConcepts,
+    missingConcepts: missingConcepts,
+    acceptedEvidenceIds: acceptedEvidenceIds
+  };
+}
+
+function validateEvidenceArray(evidenceRaw: Object): EvidenceUnit[] {
+  if (!Array.isArray(evidenceRaw)) {
+    throw new AppError('E_PROTOCOL_INVALID', 'evidence 字段无效', ErrorStage.PROTOCOL, false);
+  }
+  const arr: Object[] = evidenceRaw as Object[];
+  if (arr.length === 0) {
+    throw new AppError('E_PROTOCOL_INVALID', 'evidence 不能为空', ErrorStage.PROTOCOL, false);
+  }
+  const seenIds: Set<string> = new Set<string>();
+  const evidence: EvidenceUnit[] = [];
+  for (const item of arr) {
+    if (item === undefined || typeof item !== 'object' || item === null || Array.isArray(item)) {
+      throw new AppError('E_PROTOCOL_INVALID', 'evidence 项无效', ErrorStage.PROTOCOL, false);
+    }
+    const unit: EvidenceUnit = validateEvidenceUnit(item as Record<string, Object>);
+    if (seenIds.has(unit.evidenceId)) {
+      throw new AppError('E_PROTOCOL_INVALID', 'evidenceId 重复', ErrorStage.PROTOCOL, false);
+    }
+    seenIds.add(unit.evidenceId);
+    evidence.push(unit);
+  }
+  return evidence;
 }
 
 export class ProtocolCodec {
@@ -185,6 +663,77 @@ export class ProtocolCodec {
           message: raw['message'] as string
         } as ErrorPayload;
       }
+      case MessageType.PROFILE: {
+        const profileRaw: Object | undefined = raw['profile'];
+        if (profileRaw === undefined || typeof profileRaw !== 'object' ||
+          profileRaw === null || Array.isArray(profileRaw)) {
+          throw new AppError('E_PROTOCOL_INVALID', 'profile 字段无效', ErrorStage.PROTOCOL, false);
+        }
+        const profile: DeviceProfileAdvertisement =
+          validateDeviceProfileAdvertisement(profileRaw as Record<string, Object>);
+        return { profile: profile } as ProfilePayload;
+      }
+      case MessageType.TASK: {
+        const taskRaw: Object | undefined = raw['task'];
+        if (taskRaw === undefined || typeof taskRaw !== 'object' ||
+          taskRaw === null || Array.isArray(taskRaw)) {
+          throw new AppError('E_PROTOCOL_INVALID', 'task 字段无效', ErrorStage.PROTOCOL, false);
+        }
+        const task: TaskRequest = validateTaskRequestFromRaw(taskRaw as Record<string, Object>);
+        const round: number = requireRound(raw, 'round');
+        return { task: task, round: round } as TaskPayload;
+      }
+      case MessageType.TASK_ACK: {
+        const taskId: string = requireNonEmptyString(raw, 'taskId');
+        const round: number = requireRound(raw, 'round');
+        const acceptedAt: number = requireNumber(raw, 'acceptedAt');
+        const candidateCount: number = requireNumber(raw, 'candidateCount');
+        if (!Number.isInteger(candidateCount) || candidateCount < 0) {
+          throw new AppError('E_PROTOCOL_INVALID', 'candidateCount 字段无效', ErrorStage.PROTOCOL, false);
+        }
+        return {
+          taskId: taskId,
+          round: round,
+          acceptedAt: acceptedAt,
+          candidateCount: candidateCount
+        } as TaskAckPayload;
+      }
+      case MessageType.EVIDENCE: {
+        const taskId: string = requireNonEmptyString(raw, 'taskId');
+        const round: number = requireRound(raw, 'round');
+        const evidence: EvidenceUnit[] = validateEvidenceArray(raw['evidence']);
+        return {
+          taskId: taskId,
+          round: round,
+          evidence: evidence
+        } as EvidencePayload;
+      }
+      case MessageType.TSF: {
+        const taskId: string = requireNonEmptyString(raw, 'taskId');
+        const round: number = requireRound(raw, 'round');
+        const resultRaw: Object | undefined = raw['result'];
+        if (resultRaw === undefined || typeof resultRaw !== 'object' ||
+          resultRaw === null || Array.isArray(resultRaw)) {
+          throw new AppError('E_PROTOCOL_INVALID', 'result 字段无效', ErrorStage.PROTOCOL, false);
+        }
+        const result: TaskSufficiencyResult =
+          validateTaskSufficiencyResultFromRaw(resultRaw as Record<string, Object>);
+        return {
+          taskId: taskId,
+          round: round,
+          result: result
+        } as TsfPayload;
+      }
+      case MessageType.CANCEL: {
+        const taskId: string = requireNonEmptyString(raw, 'taskId');
+        const code: string = requireNonEmptyString(raw, 'code');
+        const reason: string = requireNonEmptyString(raw, 'reason');
+        return {
+          taskId: taskId,
+          code: code,
+          reason: reason
+        } as CancelPayload;
+      }
       default:
         throw new AppError('E_PROTOCOL_INVALID', '未知消息类型', ErrorStage.PROTOCOL, false);
     }
@@ -230,6 +779,116 @@ export class ProtocolCodec {
     sentAt: number, payload: ErrorPayload): ProtocolEnvelope {
     return {
       version: PROTOCOL_VERSION, type: MessageType.ERROR, messageId: messageId, sessionId: sessionId,
+      requestId: requestId, sentAt: sentAt, payload: payload
+    };
+  }
+
+  createProfile(messageId: string, sessionId: string, requestId: string,
+    sentAt: number, payload: ProfilePayload): ProtocolEnvelope {
+    validateTypedProfile(payload.profile);
+    return {
+      version: PROTOCOL_VERSION, type: MessageType.PROFILE, messageId: messageId, sessionId: sessionId,
+      requestId: requestId, sentAt: sentAt, payload: payload
+    };
+  }
+
+  createTask(messageId: string, sessionId: string, requestId: string,
+    sentAt: number, payload: TaskPayload): ProtocolEnvelope {
+    if (!isRoundValidNumber(payload.round)) {
+      throw new AppError('E_PROTOCOL_INVALID', 'round 字段无效', ErrorStage.PROTOCOL, false);
+    }
+    // Delegate to the shared semantic contract validator; it throws KnowledgeError on invalid
+    // tasks. We rethrow as AppError to keep the codec's error surface uniform.
+    try {
+      validateTaskRequest(payload.task);
+    } catch (e) {
+      throw new AppError('E_PROTOCOL_INVALID', 'task 字段无效', ErrorStage.PROTOCOL, false);
+    }
+    return {
+      version: PROTOCOL_VERSION, type: MessageType.TASK, messageId: messageId, sessionId: sessionId,
+      requestId: requestId, sentAt: sentAt, payload: payload
+    };
+  }
+
+  createTaskAck(messageId: string, sessionId: string, requestId: string,
+    sentAt: number, payload: TaskAckPayload): ProtocolEnvelope {
+    if (typeof payload.taskId !== 'string' || payload.taskId.length === 0) {
+      throw new AppError('E_PROTOCOL_INVALID', 'taskId 字段无效', ErrorStage.PROTOCOL, false);
+    }
+    if (!isRoundValidNumber(payload.round)) {
+      throw new AppError('E_PROTOCOL_INVALID', 'round 字段无效', ErrorStage.PROTOCOL, false);
+    }
+    if (typeof payload.acceptedAt !== 'number' || !Number.isFinite(payload.acceptedAt)) {
+      throw new AppError('E_PROTOCOL_INVALID', 'acceptedAt 字段无效', ErrorStage.PROTOCOL, false);
+    }
+    if (typeof payload.candidateCount !== 'number' ||
+      !Number.isInteger(payload.candidateCount) || payload.candidateCount < 0) {
+      throw new AppError('E_PROTOCOL_INVALID', 'candidateCount 字段无效', ErrorStage.PROTOCOL, false);
+    }
+    return {
+      version: PROTOCOL_VERSION, type: MessageType.TASK_ACK, messageId: messageId, sessionId: sessionId,
+      requestId: requestId, sentAt: sentAt, payload: payload
+    };
+  }
+
+  createEvidence(messageId: string, sessionId: string, requestId: string,
+    sentAt: number, payload: EvidencePayload): ProtocolEnvelope {
+    if (typeof payload.taskId !== 'string' || payload.taskId.length === 0) {
+      throw new AppError('E_PROTOCOL_INVALID', 'taskId 字段无效', ErrorStage.PROTOCOL, false);
+    }
+    if (!isRoundValidNumber(payload.round)) {
+      throw new AppError('E_PROTOCOL_INVALID', 'round 字段无效', ErrorStage.PROTOCOL, false);
+    }
+    if (!Array.isArray(payload.evidence) || payload.evidence.length === 0) {
+      throw new AppError('E_PROTOCOL_INVALID', 'evidence 不能为空', ErrorStage.PROTOCOL, false);
+    }
+    const seenIds: Set<string> = new Set<string>();
+    for (const unit of payload.evidence) {
+      if (unit === null || typeof unit !== 'object') {
+        throw new AppError('E_PROTOCOL_INVALID', 'evidence 项无效', ErrorStage.PROTOCOL, false);
+      }
+      validateTypedEvidenceUnit(unit);
+      if (seenIds.has(unit.evidenceId)) {
+        throw new AppError('E_PROTOCOL_INVALID', 'evidenceId 重复', ErrorStage.PROTOCOL, false);
+      }
+      seenIds.add(unit.evidenceId);
+    }
+    // P4 EVIDENCE performs a full UTF-8 message size check via encode() before transmission;
+    // callers should use codec.encode(envelope) to enforce MAX_MESSAGE_BYTES.
+    return {
+      version: PROTOCOL_VERSION, type: MessageType.EVIDENCE, messageId: messageId, sessionId: sessionId,
+      requestId: requestId, sentAt: sentAt, payload: payload
+    };
+  }
+
+  createTsf(messageId: string, sessionId: string, requestId: string,
+    sentAt: number, payload: TsfPayload): ProtocolEnvelope {
+    if (typeof payload.taskId !== 'string' || payload.taskId.length === 0) {
+      throw new AppError('E_PROTOCOL_INVALID', 'taskId 字段无效', ErrorStage.PROTOCOL, false);
+    }
+    if (!isRoundValidNumber(payload.round)) {
+      throw new AppError('E_PROTOCOL_INVALID', 'round 字段无效', ErrorStage.PROTOCOL, false);
+    }
+    validateTypedTsfResult(payload.result);
+    return {
+      version: PROTOCOL_VERSION, type: MessageType.TSF, messageId: messageId, sessionId: sessionId,
+      requestId: requestId, sentAt: sentAt, payload: payload
+    };
+  }
+
+  createCancel(messageId: string, sessionId: string, requestId: string,
+    sentAt: number, payload: CancelPayload): ProtocolEnvelope {
+    if (typeof payload.taskId !== 'string' || payload.taskId.length === 0) {
+      throw new AppError('E_PROTOCOL_INVALID', 'taskId 字段无效', ErrorStage.PROTOCOL, false);
+    }
+    if (typeof payload.code !== 'string' || payload.code.length === 0) {
+      throw new AppError('E_PROTOCOL_INVALID', 'code 字段无效', ErrorStage.PROTOCOL, false);
+    }
+    if (typeof payload.reason !== 'string' || payload.reason.length === 0) {
+      throw new AppError('E_PROTOCOL_INVALID', 'reason 字段无效', ErrorStage.PROTOCOL, false);
+    }
+    return {
+      version: PROTOCOL_VERSION, type: MessageType.CANCEL, messageId: messageId, sessionId: sessionId,
       requestId: requestId, sentAt: sentAt, payload: payload
     };
   }

@@ -109,6 +109,33 @@ export default function sqlLikeCandidateQueryTest() {
       }
     });
 
+    it('rejects every dangerous URI path and untrimmed SQL filter value', 0, () => {
+      const unsafeValues: string[] = [
+        ' doc-os', 'doc-os ', ' 操作系统 ', 'file:///private/a', 'file:/private/a',
+        'content://provider/id', 'content:provider-id', 'datashare://provider/id',
+        'datashare:provider-id', 'http://example.com', 'https://example.com', 'ftp://example.com',
+        'data:text/plain,test', 'C:\\private\\a', 'C:/private/a', 'C:private\\a', '/data/private/a',
+        '\\\\server\\share\\a', ' datashare:provider-id '
+      ];
+      for (const value of unsafeValues) {
+        expectError({ queryText: 'database', topK: 1, privacyLevel: 'LOCAL_ONLY',
+          filters: { documentIds: [value] } }, 'E_FILTER_INVALID');
+        expectError({ queryText: 'database', topK: 1, privacyLevel: 'LOCAL_ONLY',
+          filters: { tags: [value] } }, 'E_FILTER_INVALID');
+      }
+    });
+
+    it('keeps ordinary business prefixes available to SQL filters', 0, () => {
+      const query = buildSqlLikeCandidateQuery({
+        queryText: 'database', topK: 5, privacyLevel: 'PRIVATE_GROUP',
+        filters: {
+          documentIds: ['doc-os', 'database:ACID'],
+          tags: ['操作系统', 'ACID', 'transaction:isolation']
+        }
+      });
+      expect(query === undefined).assertFalse();
+    });
+
     it('accepts all exact request and filter boundaries', 0, () => {
       const query = buildSqlLikeCandidateQuery({
         queryText: 'q'.repeat(1000), topK: 20, privacyLevel: 'PRIVATE_GROUP',

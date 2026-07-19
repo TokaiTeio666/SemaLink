@@ -13,6 +13,8 @@ import { DocumentChunk } from '../../../main/ets/knowledge/model/DocumentChunk';
 import { KnowledgeError } from '../../../main/ets/contracts/knowledge/KnowledgeError';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { CREATE_DOCUMENTS_V2 } from '../../../main/ets/knowledge/storage/KnowledgeDatabaseSchema';
+import { RepositoryStatistics } from '../../../main/ets/knowledge/storage/DocumentRepository';
+import { readChunks, readDocuments } from './support/RdbKnowledgeInspection';
 
 const V1_DOCUMENTS: string = 'CREATE TABLE documents (' +
   'document_id TEXT PRIMARY KEY, title TEXT NOT NULL, modality TEXT NOT NULL, normalized_text TEXT NOT NULL, ' +
@@ -162,6 +164,49 @@ export default function knowledgeDatabaseTest() {
       expect(metadata.indexState).assertEqual('EMPTY');
     });
 
+    it('keeps lightweight repository statistics deterministic for empty and tagged documents', 0, async () => {
+      const ability = await abilityDelegatorRegistry.getAbilityDelegator().getCurrentTopAbility();
+      const context = ability.context;
+      const storeName = 'semalink_statistics_' + Date.now().toString() + '.db';
+      const database = new KnowledgeDatabase(storeName);
+      try {
+        await database.initialize(context);
+        const repository = new RdbDocumentRepository(database);
+        const emptyExpected: RepositoryStatistics = {
+          documentCount: 0, chunkCount: 0, modalities: [], domainCounts: []
+        };
+        expect(JSON.stringify(await repository.getStatistics())).assertEqual(JSON.stringify(emptyExpected));
+        const first: KnowledgeDocument = {
+          documentId: 'a-document', title: 'Database', modality: 'pdf', normalizedText: 'database',
+          tags: ['数据库', '数据库', 'ACID'], checksum: 'statistics-a', createdAt: 1, updatedAt: 1,
+          privacyLevel: 'PRIVATE_GROUP'
+        };
+        const firstChunk: DocumentChunk = {
+          chunkId: 'a-chunk', documentId: first.documentId, chunkIndex: 0, text: 'database', summary: 'database',
+          keywords: ['database'], startOffset: 0, endOffset: 8, updatedAt: 1
+        };
+        const second: KnowledgeDocument = {
+          documentId: 'z-document', title: 'Network', modality: 'text', normalizedText: 'network',
+          tags: ['数据库', '网络'], checksum: 'statistics-z', createdAt: 2, updatedAt: 2,
+          privacyLevel: 'PRIVATE_GROUP'
+        };
+        await repository.saveDocumentWithChunks(first, [firstChunk]);
+        await repository.saveDocumentWithChunks(second, []);
+        const populatedExpected: RepositoryStatistics = {
+          documentCount: 2, chunkCount: 1, modalities: ['pdf', 'text'],
+          domainCounts: [
+            { tag: '数据库', documentCount: 3 },
+            { tag: 'ACID', documentCount: 1 },
+            { tag: '网络', documentCount: 1 }
+          ]
+        };
+        expect(JSON.stringify(await repository.getStatistics())).assertEqual(JSON.stringify(populatedExpected));
+      } finally {
+        database.close();
+        await relationalStore.deleteRdbStore(context, storeName);
+      }
+    });
+
     it('imports long built-in and user documents idempotently and persists until clear', 0, async () => {
       const ability = await abilityDelegatorRegistry.getAbilityDelegator().getCurrentTopAbility();
       const context = ability.context;
@@ -173,7 +218,7 @@ export default function knowledgeDatabaseTest() {
       const builtIn = new RawFileDocumentImporter(context.resourceManager, repository, new DocumentChunker());
       const first = await builtIn.importBuiltInDocuments();
       const afterFirst = await repository.getStatistics();
-      const builtInDocuments = await repository.listDocuments();
+      const builtInDocuments = await readDocuments(database);
       expect(first.importedDocuments >= 12).assertTrue();
       expect(afterFirst.documentCount >= 12).assertTrue();
       expect(afterFirst.chunkCount > afterFirst.documentCount).assertTrue();
@@ -222,8 +267,8 @@ export default function knowledgeDatabaseTest() {
         await database.initialize(context);
         await database.initialize(context);
         const repository = new RdbDocumentRepository(database);
-        const migratedDocuments = await repository.listDocuments();
-        const migratedChunks = await repository.listChunks();
+        const migratedDocuments = await readDocuments(database);
+        const migratedChunks = await readChunks(database);
         expect(migratedDocuments.length).assertEqual(1);
         expect(migratedChunks.length).assertEqual(1);
         expect(migratedDocuments[0].privacyLevel).assertEqual('PRIVATE_GROUP');
@@ -242,7 +287,7 @@ export default function knowledgeDatabaseTest() {
         const reopened = new KnowledgeDatabase(storeName);
         await reopened.initialize(context);
         const reopenedRepository = new RdbDocumentRepository(reopened);
-        const persisted = await reopenedRepository.listDocuments();
+        const persisted = await readDocuments(reopened);
         expect(persisted.length).assertEqual(2);
         expect(persisted[0].documentId).assertEqual('legacy-doc');
         expect(persisted[0].privacyLevel).assertEqual('PRIVATE_GROUP');
@@ -272,7 +317,7 @@ export default function knowledgeDatabaseTest() {
         const recovered = new KnowledgeDatabase(storeName);
         await recovered.initialize(context);
         expect(recovered.getStore().version).assertEqual(2);
-        const documents = await new RdbDocumentRepository(recovered).listDocuments();
+        const documents = await readDocuments(recovered);
         expect(documents.length).assertEqual(1);
         expect(documents[0].privacyLevel).assertEqual('PRIVATE_GROUP');
         recovered.close();
@@ -297,7 +342,7 @@ export default function knowledgeDatabaseTest() {
         const migrated = new KnowledgeDatabase(storeName);
         await migrated.initialize(context);
         expect(migrated.getStore().version).assertEqual(2);
-        const documents = await new RdbDocumentRepository(migrated).listDocuments();
+        const documents = await readDocuments(migrated);
         expect(documents.length).assertEqual(1);
         expect(documents[0].documentId).assertEqual('v0-doc');
         expect(documents[0].privacyLevel).assertEqual('PRIVATE_GROUP');
@@ -333,7 +378,7 @@ export default function knowledgeDatabaseTest() {
         await database.getStore().executeSql(
           "UPDATE documents SET modality='sql_column' WHERE document_id='duplicate-doc'");
         const readError = await capturedKnowledgeError(async (): Promise<void> => {
-          await repository.listDocuments();
+          await repository.getStatistics();
         });
         expect(readError?.code).assertEqual('E_STORAGE_FAILED');
         expect(readError?.message.toLowerCase().includes('sql')).assertFalse();

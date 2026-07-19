@@ -11,7 +11,6 @@ import {
   KnowledgeMetadata,
   RepositoryStatistics
 } from '../main/ets/knowledge/storage/DocumentRepository';
-import { InMemoryBenchmarkRepository } from './benchmark/InMemoryBenchmarkRepository';
 
 class CapturingRepository implements DocumentRepository {
   readonly documents: KnowledgeDocument[] = [];
@@ -30,14 +29,6 @@ class CapturingRepository implements DocumentRepository {
       }
     }
     return false;
-  }
-
-  async listDocuments(): Promise<KnowledgeDocument[]> {
-    return this.documents.slice();
-  }
-
-  async listChunks(): Promise<DocumentChunk[]> {
-    return [];
   }
 
   async clearAll(): Promise<void> {
@@ -82,12 +73,10 @@ export default function knowledgeImportPrivacyTest() {
     });
 
     it('preserves an explicit LOCAL_ONLY fixture through the in-memory repository', 0, async () => {
-      const repository = new InMemoryBenchmarkRepository([], []);
+      const repository = new CapturingRepository();
       await repository.saveDocumentWithChunks(localDocument(), []);
-      const documents = await repository.listDocuments();
-
-      expect(documents.length).assertEqual(1);
-      expect(documents[0].privacyLevel).assertEqual('LOCAL_ONLY');
+      expect(repository.documents.length).assertEqual(1);
+      expect(repository.documents[0].privacyLevel).assertEqual('LOCAL_ONLY');
     });
   });
 }

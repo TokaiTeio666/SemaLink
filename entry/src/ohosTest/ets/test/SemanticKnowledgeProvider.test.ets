@@ -5,10 +5,6 @@ import { TaskRequest } from '../../../main/ets/contracts/semantic/SemanticModels
 import { EvidenceUnit } from '../../../main/ets/contracts/semantic/SemanticModels';
 import { DocumentChunk } from '../../../main/ets/knowledge/model/DocumentChunk';
 import { KnowledgeDocument } from '../../../main/ets/knowledge/model/KnowledgeDocument';
-import {
-  chooseEnabledRdbSearchBackend,
-  chooseRdbSearchBackend
-} from '../../../main/ets/knowledge/storage/RdbSearchCapabilityProbe';
 import { AppRuntime } from '../../../main/ets/runtime/AppRuntime';
 import { FakeTransport } from '../../../test/support/FakeTransport';
 import {
@@ -36,10 +32,6 @@ export default function semanticKnowledgeProviderDeviceTest(): void {
       try {
         expect(components.gateway === components.service).assertTrue();
         expect(components.provider === components.service).assertTrue();
-        expect(components.searchCapabilities.probedBackend).assertEqual(
-          chooseRdbSearchBackend(components.searchCapabilities));
-        expect(components.searchBackend).assertEqual(
-          chooseEnabledRdbSearchBackend(components.searchCapabilities));
         const imported = await components.importer.importBuiltInDocuments();
         expect(imported.importedDocuments).assertEqual(12);
         const statistics = await components.repository.getStatistics();

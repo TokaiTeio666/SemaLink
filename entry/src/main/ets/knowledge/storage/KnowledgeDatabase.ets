@@ -13,14 +13,23 @@ const DEFAULT_STORE_NAME: string = 'semalink_knowledge.db';
 const DATABASE_LOG_DOMAIN: number = 0x534C;
 const DATABASE_LOG_TAG: string = 'KnowledgeDatabase';
 type InitializationStage = 'OPEN_STORE' | 'READ_VERSION' | 'BEGIN_TRANSACTION' | 'INSPECT_SCHEMA' |
-  'CREATE_FRESH_SCHEMA' | 'ALTER_LEGACY_SCHEMA' | 'CREATE_SUPPORT_TABLES' | 'SET_VERSION' | 'COMMIT' |
-  'CLOSE_AFTER_FAILURE';
+  'CREATE_FRESH_SCHEMA' | 'ALTER_LEGACY_SCHEMA' | 'CREATE_SUPPORT_TABLES' | 'CREATE_SUPPORT_INDEXES' |
+  'SET_VERSION' | 'COMMIT' | 'CLOSE_AFTER_FAILURE';
 const CREATE_CHUNKS: string = 'CREATE TABLE IF NOT EXISTS document_chunks (' +
   'chunk_id TEXT PRIMARY KEY, document_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, chunk_text TEXT NOT NULL, ' +
   'summary TEXT NOT NULL, keywords_json TEXT NOT NULL, start_offset INTEGER NOT NULL, end_offset INTEGER NOT NULL, ' +
   'updated_at INTEGER NOT NULL)';
 const CREATE_METADATA: string = 'CREATE TABLE IF NOT EXISTS knowledge_metadata (' +
   'metadata_key TEXT PRIMARY KEY, metadata_value TEXT NOT NULL)';
+const CREATE_CHUNK_DOCUMENT_INDEX: string = 'CREATE INDEX IF NOT EXISTS idx_chunks_document ' +
+  'ON document_chunks(document_id, chunk_index, chunk_id)';
+const CREATE_DOCUMENT_FILTER_INDEX: string = 'CREATE INDEX IF NOT EXISTS idx_documents_filters ' +
+  'ON documents(privacy_level, modality, updated_at, document_id)';
+
+async function ensureSupportIndexes(store: relationalStore.RdbStore): Promise<void> {
+  await store.executeSql(CREATE_CHUNK_DOCUMENT_INDEX);
+  await store.executeSql(CREATE_DOCUMENT_FILTER_INDEX);
+}
 
 function logStage(stage: InitializationStage): void {
   hilog.info(DATABASE_LOG_DOMAIN, DATABASE_LOG_TAG, '%{public}s', stage);
@@ -130,6 +139,9 @@ export class KnowledgeDatabase {
         await store.executeSql("INSERT OR IGNORE INTO knowledge_metadata(metadata_key, metadata_value) VALUES ('index_version','index-empty')");
         await store.executeSql("INSERT OR IGNORE INTO knowledge_metadata(metadata_key, metadata_value) VALUES ('profile_version','profile-empty')");
         await store.executeSql("INSERT OR IGNORE INTO knowledge_metadata(metadata_key, metadata_value) VALUES ('last_imported_at','0')");
+        stage = 'CREATE_SUPPORT_INDEXES';
+        logStage(stage);
+        await ensureSupportIndexes(store);
         stage = 'SET_VERSION';
         logStage(stage);
         store.version = KNOWLEDGE_DATABASE_VERSION;

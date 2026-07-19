@@ -34,8 +34,6 @@ class ProviderRepository implements DocumentRepository {
   chunks: DocumentChunk[];
   metadata: KnowledgeMetadata;
   failureKind: '' | 'storage' | 'unknown' = '';
-  listDocumentsCalls: number = 0;
-  listChunksCalls: number = 0;
 
   constructor(state: 'EMPTY' | 'BUILDING' | 'READY' | 'ERROR' = 'READY') {
     this.documents = [{
@@ -61,18 +59,6 @@ class ProviderRepository implements DocumentRepository {
   async hasChecksum(checksum: string): Promise<boolean> { return false; }
   async clearAll(): Promise<void> {}
   async setMetadata(metadata: KnowledgeMetadata): Promise<void> { this.metadata = metadata; }
-
-  async listDocuments(): Promise<KnowledgeDocument[]> {
-    this.listDocumentsCalls += 1;
-    this.throwIfFailed();
-    return this.documents.slice();
-  }
-
-  async listChunks(): Promise<DocumentChunk[]> {
-    this.listChunksCalls += 1;
-    this.throwIfFailed();
-    return this.chunks.slice();
-  }
 
   async getStatistics(): Promise<RepositoryStatistics> {
     this.throwIfFailed();
@@ -254,8 +240,6 @@ export default function semanticKnowledgeProviderTest(): void {
       });
       await service.searchEvidence(task());
 
-      expect(repository.listDocumentsCalls).assertEqual(0);
-      expect(repository.listChunksCalls).assertEqual(0);
       expect(retrieval.lastRequest?.topK).assertEqual(RETRIEVAL_CANDIDATE_LIMIT);
     });
 

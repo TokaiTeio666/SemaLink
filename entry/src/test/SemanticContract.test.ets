@@ -7,8 +7,10 @@ import {
   PrivacyLevel,
   SEMANTIC_CONTRACT_VERSION,
   TaskRequest,
+  TaskRequestFilters,
   validateSemanticContractVersion,
-  validateTaskRequest
+  validateTaskRequest,
+  validateTaskRequestFilters
 } from '../main/ets/contracts/semantic/SemanticModels';
 import { SemanticKnowledgeProvider } from '../main/ets/contracts/semantic/SemanticKnowledgeProvider';
 
@@ -134,6 +136,17 @@ export default function semanticContractTest() {
       expect(capturedCode((): void => validateTaskRequest(invalid))).assertEqual('E_FILTER_INVALID');
     });
 
+    it('rejects malformed formal task filter objects', 0, () => {
+      const malformedFilters: TaskRequestFilters[] = [
+        JSON.parse('null') as TaskRequestFilters,
+        JSON.parse('[]') as TaskRequestFilters,
+        JSON.parse('"runtime-secret"') as TaskRequestFilters
+      ];
+      for (const filters of malformedFilters) {
+        expect(capturedCode((): void => validateTaskRequestFilters(filters))).assertEqual('E_FILTER_INVALID');
+      }
+    });
+
     it('rejects invalid privacy concepts and single-segment or UNC storage references', 0, () => {
       const invalid = task();
       invalid.privacyLevel = 'NETWORK' as PrivacyLevel;
@@ -150,6 +163,32 @@ export default function semanticContractTest() {
         invalid.filters.documentIds = ['\\\\server\\share\\file'];
       }
       expect(capturedCode((): void => validateTaskRequest(invalid))).assertEqual('E_FILTER_INVALID');
+    });
+
+    it('uses the same safe filter boundary for formal task requests', 0, () => {
+      const unsafeValues: string[] = [
+        ' doc-os', 'doc-os ', ' 操作系统 ', 'file:///private/a', 'file:/private/a',
+        'content://provider/id', 'content:provider-id', 'datashare://provider/id',
+        'datashare:provider-id', 'http://example.com', 'https://example.com', 'ftp://example.com',
+        'data:text/plain,test', 'C:\\private\\a', 'C:/private/a', 'C:private\\a', '/data/private/a',
+        '\\\\server\\share\\a', ' content://provider/id '
+      ];
+      for (const value of unsafeValues) {
+        const invalidDocument = task();
+        if (invalidDocument.filters !== undefined) invalidDocument.filters.documentIds = [value];
+        expect(capturedCode((): void => validateTaskRequest(invalidDocument))).assertEqual('E_FILTER_INVALID');
+        const invalidTag = task();
+        if (invalidTag.filters !== undefined) invalidTag.filters.tags = [value];
+        expect(capturedCode((): void => validateTaskRequest(invalidTag))).assertEqual('E_FILTER_INVALID');
+      }
+
+      const valid = task();
+      if (valid.filters !== undefined) {
+        valid.filters.documentIds = ['doc-os', 'database:ACID'];
+        valid.filters.tags = ['操作系统', 'ACID', 'transaction:isolation'];
+      }
+      validateTaskRequest(valid);
+      expect(true).assertTrue();
     });
 
     it('reuses the formal knowledge profile and returns no-match as an empty list', 0, async () => {

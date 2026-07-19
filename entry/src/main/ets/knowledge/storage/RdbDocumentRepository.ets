@@ -111,59 +111,28 @@ function mapCandidate(result: relationalStore.ResultSet, query: SqlLikeCandidate
   };
 }
 
-export interface RdbSearchDiagnostics {
-  searchCalls: number;
-  candidateRowsReturned: number;
-  fullReadCallsDuringSearch: number;
-}
-
 export class RdbDocumentRepository implements DocumentRepository, KnowledgeCandidateSearch {
   private readonly database: KnowledgeDatabase;
-  private activeCandidateSearch: number = 0;
-  private searchCalls: number = 0;
-  private candidateRowsReturned: number = 0;
-  private fullReadCallsDuringSearch: number = 0;
 
   constructor(database: KnowledgeDatabase) {
     this.database = database;
   }
 
   async searchCandidates(request: KnowledgeRetrievalRequest): Promise<RetrievalCandidate[]> {
-    this.activeCandidateSearch += 1;
-    this.searchCalls += 1;
+    const query: SqlLikeCandidateQuery | undefined = buildSqlLikeCandidateQuery(request);
+    if (query === undefined) return [];
+    const candidates: RetrievalCandidate[] = [];
     try {
-      const query: SqlLikeCandidateQuery | undefined = buildSqlLikeCandidateQuery(request);
-      if (query === undefined) return [];
-      const candidates: RetrievalCandidate[] = [];
+      const result = await this.database.getStore().querySql(query.sql, query.bindArgs);
       try {
-        const result = await this.database.getStore().querySql(query.sql, query.bindArgs);
-        try {
-          while (result.goToNextRow()) candidates.push(mapCandidate(result, query, request));
-        } finally {
-          result.close();
-        }
-      } catch (error) {
-        throw storageOperationError();
+        while (result.goToNextRow()) candidates.push(mapCandidate(result, query, request));
+      } finally {
+        result.close();
       }
-      this.candidateRowsReturned += candidates.length;
-      return candidates;
-    } finally {
-      this.activeCandidateSearch -= 1;
+    } catch (error) {
+      throw storageOperationError();
     }
-  }
-
-  resetSearchDiagnostics(): void {
-    this.searchCalls = 0;
-    this.candidateRowsReturned = 0;
-    this.fullReadCallsDuringSearch = 0;
-  }
-
-  getSearchDiagnostics(): RdbSearchDiagnostics {
-    return {
-      searchCalls: this.searchCalls,
-      candidateRowsReturned: this.candidateRowsReturned,
-      fullReadCallsDuringSearch: this.fullReadCallsDuringSearch
-    };
+    return candidates;
   }
 
   async saveDocumentWithChunks(document: KnowledgeDocument, chunks: DocumentChunk[]): Promise<void> {
@@ -217,95 +186,63 @@ export class RdbDocumentRepository implements DocumentRepository, KnowledgeCandi
     }
   }
 
-  async listDocuments(): Promise<KnowledgeDocument[]> {
-    if (this.activeCandidateSearch > 0) this.fullReadCallsDuringSearch += 1;
-    const documents: KnowledgeDocument[] = [];
-    try {
-      const result = await this.database.getStore().querySql(
-        'SELECT document_id,title,modality,normalized_text,tags_json,checksum,created_at,updated_at,privacy_level ' +
-        'FROM documents ORDER BY document_id');
-      try {
-        while (result.goToNextRow()) {
-          documents.push({
-            documentId: result.getString(0), title: result.getString(1),
-            modality: parseStoredModality(result.getString(2)), normalizedText: result.getString(3),
-            tags: parseStoredStringArray(result.getString(4)), checksum: result.getString(5),
-            createdAt: result.getLong(6), updatedAt: result.getLong(7),
-            privacyLevel: parseStoredPrivacyLevel(result.getString(8))
-          });
-        }
-      } finally {
-        result.close();
-      }
-      return documents;
-    } catch (error) {
-      throw storageOperationError();
-    }
-  }
-
-  async listChunks(): Promise<DocumentChunk[]> {
-    if (this.activeCandidateSearch > 0) this.fullReadCallsDuringSearch += 1;
-    const chunks: DocumentChunk[] = [];
-    try {
-      const result = await this.database.getStore().querySql(
-        'SELECT chunk_id,document_id,chunk_index,chunk_text,summary,keywords_json,start_offset,end_offset,updated_at ' +
-        'FROM document_chunks ORDER BY document_id,chunk_index');
-      try {
-        while (result.goToNextRow()) {
-          chunks.push({
-            chunkId: result.getString(0), documentId: result.getString(1), chunkIndex: result.getLong(2),
-            text: result.getString(3), summary: result.getString(4),
-            keywords: parseStoredStringArray(result.getString(5)), startOffset: result.getLong(6),
-            endOffset: result.getLong(7), updatedAt: result.getLong(8)
-          });
-        }
-      } finally {
-        result.close();
-      }
-      return chunks;
-    } catch (error) {
-      throw storageOperationError();
-    }
-  }
-
   async clearAll(): Promise<void> {
     let store: relationalStore.RdbStore | undefined = undefined;
+    let transactionStarted = false;
     try {
       store = this.database.getStore();
       store.beginTransaction();
+      transactionStarted = true;
       await store.executeSql('DELETE FROM document_chunks');
       await store.executeSql('DELETE FROM documents');
-      store.commit();
-      await this.setMetadata({
+      await this.writeMetadata(store, {
         indexState: 'EMPTY', indexVersion: 'index-empty', profileVersion: 'profile-empty', updatedAt: Date.now()
       });
+      store.commit();
+      transactionStarted = false;
     } catch (error) {
-      if (store !== undefined) {
-        rollbackAfterFailure(store);
-      }
+      if (transactionStarted && store !== undefined) rollbackAfterFailure(store);
       throw storageOperationError();
     }
   }
 
   async getStatistics(): Promise<RepositoryStatistics> {
-    const documents = await this.listDocuments();
-    const chunks = await this.listChunks();
-    const modalities: KnowledgeModality[] = [];
-    const domainCounts: DomainCount[] = [];
-    for (const document of documents) {
-      if (modalities.indexOf(document.modality) < 0) {
-        modalities.push(document.modality);
+    try {
+      const store = this.database.getStore();
+      const documentCountResult = await store.querySql('SELECT COUNT(*) FROM documents');
+      let documentCount = 0;
+      try {
+        if (documentCountResult.goToNextRow()) documentCount = documentCountResult.getLong(0);
+      } finally {
+        documentCountResult.close();
       }
-      for (const tag of document.tags) {
-        incrementDomain(domainCounts, tag);
+      const chunkCountResult = await store.querySql('SELECT COUNT(*) FROM document_chunks');
+      let chunkCount = 0;
+      try {
+        if (chunkCountResult.goToNextRow()) chunkCount = chunkCountResult.getLong(0);
+      } finally {
+        chunkCountResult.close();
       }
+      const modalities: KnowledgeModality[] = [];
+      const domainCounts: DomainCount[] = [];
+      const metadataResult = await store.querySql(
+        'SELECT modality,tags_json FROM documents ORDER BY document_id');
+      try {
+        while (metadataResult.goToNextRow()) {
+          const modality = parseStoredModality(metadataResult.getString(0));
+          if (modalities.indexOf(modality) < 0) modalities.push(modality);
+          for (const tag of parseStoredStringArray(metadataResult.getString(1))) incrementDomain(domainCounts, tag);
+        }
+      } finally {
+        metadataResult.close();
+      }
+      return {
+        documentCount: documentCount, chunkCount: chunkCount,
+        modalities: modalities, domainCounts: domainCounts
+      };
+    } catch (error) {
+      throw storageOperationError();
     }
-    return {
-      documentCount: documents.length,
-      chunkCount: chunks.length,
-      modalities: modalities,
-      domainCounts: domainCounts
-    };
   }
 
   async getMetadata(): Promise<KnowledgeMetadata> {
@@ -335,18 +272,29 @@ export class RdbDocumentRepository implements DocumentRepository, KnowledgeCandi
   }
 
   async setMetadata(metadata: KnowledgeMetadata): Promise<void> {
+    let store: relationalStore.RdbStore | undefined = undefined;
+    let transactionStarted = false;
     try {
-      const store = this.database.getStore();
-      await store.executeSql('INSERT OR REPLACE INTO knowledge_metadata(metadata_key,metadata_value) VALUES (?,?)',
-        ['index_state', metadata.indexState]);
-      await store.executeSql('INSERT OR REPLACE INTO knowledge_metadata(metadata_key,metadata_value) VALUES (?,?)',
-        ['index_version', metadata.indexVersion]);
-      await store.executeSql('INSERT OR REPLACE INTO knowledge_metadata(metadata_key,metadata_value) VALUES (?,?)',
-        ['profile_version', metadata.profileVersion]);
-      await store.executeSql('INSERT OR REPLACE INTO knowledge_metadata(metadata_key,metadata_value) VALUES (?,?)',
-        ['last_imported_at', metadata.updatedAt.toString()]);
+      store = this.database.getStore();
+      store.beginTransaction();
+      transactionStarted = true;
+      await this.writeMetadata(store, metadata);
+      store.commit();
+      transactionStarted = false;
     } catch (error) {
+      if (transactionStarted && store !== undefined) rollbackAfterFailure(store);
       throw storageOperationError();
     }
+  }
+
+  private async writeMetadata(store: relationalStore.RdbStore, metadata: KnowledgeMetadata): Promise<void> {
+    await store.executeSql('INSERT OR REPLACE INTO knowledge_metadata(metadata_key,metadata_value) VALUES (?,?)',
+      ['index_state', metadata.indexState]);
+    await store.executeSql('INSERT OR REPLACE INTO knowledge_metadata(metadata_key,metadata_value) VALUES (?,?)',
+      ['index_version', metadata.indexVersion]);
+    await store.executeSql('INSERT OR REPLACE INTO knowledge_metadata(metadata_key,metadata_value) VALUES (?,?)',
+      ['profile_version', metadata.profileVersion]);
+    await store.executeSql('INSERT OR REPLACE INTO knowledge_metadata(metadata_key,metadata_value) VALUES (?,?)',
+      ['last_imported_at', metadata.updatedAt.toString()]);
   }
 }

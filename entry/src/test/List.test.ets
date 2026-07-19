@@ -17,6 +17,10 @@ import userDocumentStabilityTest from './UserDocumentStability.test';
 import localRetrievalBenchmarkTest from './LocalRetrievalBenchmark.test';
 import localRetrievalFullBenchmarkTest from './LocalRetrievalFullBenchmark.test';
 import semanticContractTest from './SemanticContract.test';
+import semanticModelsTest from './SemanticModels.test';
+import deviceSemanticRouterTest from './DeviceSemanticRouter.test';
+import evidenceUtilitySchedulerTest from './EvidenceUtilityScheduler.test';
+import taskSufficiencyEvaluatorTest from './TaskSufficiencyEvaluator.test';
 import knowledgeDocumentPrivacyTest from './KnowledgeDocumentPrivacy.test';
 import knowledgeDatabaseMigrationTest from './KnowledgeDatabaseMigration.test';
 import knowledgeImportPrivacyTest from './KnowledgeImportPrivacy.test';
@@ -27,6 +31,10 @@ import semanticKnowledgeProviderTest from './SemanticKnowledgeProvider.test';
 import semanticAcceptanceTest from './SemanticAcceptance.test';
 import rdbKeywordRetrievalEngineTest from './RdbKeywordRetrievalEngine.test';
 import sqlLikeCandidateQueryTest from './SqlLikeCandidateQuery.test';
+import rdbSearchBackendTest from './RdbSearchBackend.test';
+import rdbSearchCapabilityProviderTest from './RdbSearchCapabilityProvider.test';
+import collaborationRecordStateTest from './CollaborationRecordState.test';
+import progressiveQueryCoordinatorTest from './ProgressiveQueryCoordinator.test';
 
 export default function testsuite(): void {
   commonModelsTest();
@@ -48,6 +56,10 @@ export default function testsuite(): void {
   localRetrievalBenchmarkTest();
   localRetrievalFullBenchmarkTest();
   semanticContractTest();
+  semanticModelsTest();
+  deviceSemanticRouterTest();
+  evidenceUtilitySchedulerTest();
+  taskSufficiencyEvaluatorTest();
   knowledgeDocumentPrivacyTest();
   knowledgeDatabaseMigrationTest();
   knowledgeImportPrivacyTest();
@@ -58,4 +70,8 @@ export default function testsuite(): void {
   semanticAcceptanceTest();
   rdbKeywordRetrievalEngineTest();
   sqlLikeCandidateQueryTest();
+  rdbSearchBackendTest();
+  rdbSearchCapabilityProviderTest();
+  collaborationRecordStateTest();
+  progressiveQueryCoordinatorTest();
 }

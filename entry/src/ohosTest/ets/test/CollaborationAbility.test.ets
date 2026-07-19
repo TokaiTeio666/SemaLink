@@ -8,6 +8,7 @@ import { ProtocolEnvelope } from '../../../main/ets/protocol/ProtocolModels';
 import { AppRuntime } from '../../../main/ets/runtime/AppRuntime';
 import { MockSummaryService } from '../../../main/ets/task/MockSummaryService';
 import { FakeTransport } from '../../../test/support/FakeTransport';
+import { P4_ERROR_CODES } from '../../../main/ets/common/AppError';
 
 const TEST_PEER: PeerDevice = {
   deviceId: 'controlled-peer', deviceName: 'Controlled Peer', deviceType: 'tablet'
@@ -54,6 +55,14 @@ export default function collaborationAbilityTest(): void {
         runtime.destroy();
         AppRuntime.reset();
       }
+    });
+
+    it('keeps the two-device acceptance error matrix explicit', 0, () => {
+      expect(P4_ERROR_CODES.length).assertEqual(4);
+      expect(P4_ERROR_CODES.indexOf('INSUFFICIENT_EVIDENCE') >= 0).assertTrue();
+      expect(P4_ERROR_CODES.indexOf('E_BACKGROUND_INTERRUPTED') >= 0).assertTrue();
+      expect(P4_ERROR_CODES.indexOf('E_PROFILE_STALE') >= 0).assertTrue();
+      expect(P4_ERROR_CODES.indexOf('E_SEMANTIC_PROTOCOL_INVALID') >= 0).assertTrue();
     });
   });
 }

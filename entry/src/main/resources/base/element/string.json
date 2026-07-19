@@ -87,6 +87,46 @@
     {
       "name": "status_ready",
       "value": "准备开始"
+    },
+    {
+      "name": "collaboration_records",
+      "value": "协作历史"
+    },
+    {
+      "name": "collaboration_empty",
+      "value": "暂无协作记录"
+    },
+    {
+      "name": "collaboration_continue_query",
+      "value": "继续查询"
+    },
+    {
+      "name": "collaboration_retry",
+      "value": "重新发送"
+    },
+    {
+      "name": "collaboration_back_to_list",
+      "value": "返回列表"
+    },
+    {
+      "name": "collaboration_status_sending",
+      "value": "发送中"
+    },
+    {
+      "name": "collaboration_status_synced",
+      "value": "已同步"
+    },
+    {
+      "name": "collaboration_status_offline",
+      "value": "已离线"
+    },
+    {
+      "name": "collaboration_status_failed",
+      "value": "失败"
+    },
+    {
+      "name": "collaboration_status_timeout",
+      "value": "超时"
     }
   ]
 }

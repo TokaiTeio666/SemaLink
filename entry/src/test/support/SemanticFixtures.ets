@@ -179,3 +179,79 @@ export const SEMANTIC_ACCEPTANCE_CASES: SemanticAcceptanceCase[] = [
   fixture('无匹配', 'no-match', '量子引力黑洞蒸发', [], ['L1', 'L2'],
     'LOCAL_ONLY', 'NONE', [], [], 'NO_MATCH')
 ];
+
+export type SemanticExpectedDevice = 'LOCAL' | 'REMOTE' | 'EITHER';
+export type SemanticCommunicationTerminalState =
+  'L1_SUFFICIENT' | 'L2_SUFFICIENT' | 'L2_INSUFFICIENT';
+
+export interface SemanticCommunicationCase {
+  name: string;
+  task: TaskRequest;
+  expectedDevice: SemanticExpectedDevice;
+  expectedDomain: SemanticExpectedDomain;
+  expectedTerminalState: SemanticCommunicationTerminalState;
+  expectedEvidenceBytes: number;
+}
+
+function communicationTask(taskId: string, queryText: string, requiredConcepts: string[],
+  acceptableLevels: EvidenceLevel[] = ['L1', 'L2']): TaskRequest {
+  return {
+    semanticContractVersion: '1.0', taskId: taskId, queryText: queryText,
+    requiredConcepts: requiredConcepts, requiredConfidence: 0.8, coverageThreshold: 0.8,
+    latencyBudgetMs: 1000, byteBudget: 4096, privacyLevel: 'PRIVATE_GROUP',
+    acceptableLevels: acceptableLevels
+  };
+}
+
+function communicationFixture(name: string, taskId: string, queryText: string, requiredConcepts: string[],
+  expectedDevice: SemanticExpectedDevice, expectedDomain: SemanticExpectedDomain,
+  expectedTerminalState: SemanticCommunicationTerminalState, expectedEvidenceBytes: number): SemanticCommunicationCase {
+  return {
+    name: name, task: communicationTask(taskId, queryText, requiredConcepts), expectedDevice: expectedDevice,
+    expectedDomain: expectedDomain, expectedTerminalState: expectedTerminalState,
+    expectedEvidenceBytes: expectedEvidenceBytes
+  };
+}
+
+export const SEMANTIC_COMMUNICATION_CASES: SemanticCommunicationCase[] = [
+  communicationFixture('本机操作系统 L1 足够', 'comm-local-os-01', '操作系统进程调度', ['进程调度'],
+    'LOCAL', '操作系统', 'L1_SUFFICIENT', 180),
+  communicationFixture('本机操作系统 L2 不足', 'comm-local-os-02', '操作系统老化', ['老化', '多级反馈队列'],
+    'LOCAL', '操作系统', 'L2_INSUFFICIENT', 360),
+  communicationFixture('本机操作系统 L2 足够', 'comm-local-os-03', '操作系统优先级队列', ['进程调度', '优先级队列'],
+    'LOCAL', '操作系统', 'L2_SUFFICIENT', 360),
+  communicationFixture('本机操作系统升级', 'comm-local-os-04', '操作系统调度策略', ['进程调度'],
+    'LOCAL', '操作系统', 'L2_SUFFICIENT', 360),
+  communicationFixture('本机数据库 L1 足够', 'comm-local-db-01', '数据库事务 ACID', ['数据库', '事务'],
+    'LOCAL', '数据库', 'L1_SUFFICIENT', 180),
+  communicationFixture('本机数据库 L2 不足', 'comm-local-db-02', '数据库两阶段提交', ['隔离性', '两阶段提交'],
+    'LOCAL', '数据库', 'L2_INSUFFICIENT', 360),
+  communicationFixture('本机数据库 L2 足够', 'comm-local-db-03', '数据库持久性', ['原子性', '持久性'],
+    'LOCAL', '数据库', 'L2_SUFFICIENT', 360),
+  communicationFixture('本机数据库隔离', 'comm-local-db-04', '数据库隔离性', ['事务', '隔离性'],
+    'LOCAL', '数据库', 'L2_SUFFICIENT', 360),
+  communicationFixture('远端网络 TCP', 'comm-remote-net-01', '网络 TCP 可靠传输', ['TCP', '可靠传输'],
+    'REMOTE', '网络', 'L2_SUFFICIENT', 360),
+  communicationFixture('远端网络确认', 'comm-remote-net-02', '网络确认重传', ['确认', '重传'],
+    'REMOTE', '网络', 'L2_SUFFICIENT', 360),
+  communicationFixture('远端网络拥塞', 'comm-remote-net-03', '网络拥塞控制', ['拥塞控制'],
+    'REMOTE', '网络', 'L2_SUFFICIENT', 360),
+  communicationFixture('远端网络链路', 'comm-remote-net-04', '网络链路可靠性', ['可靠传输'],
+    'REMOTE', '网络', 'L2_SUFFICIENT', 360),
+  communicationFixture('远端软件测试 L1', 'comm-remote-test-01', '软件测试阶段', ['软件测试'],
+    'REMOTE', '软件测试', 'L2_SUFFICIENT', 360),
+  communicationFixture('远端软件测试单元', 'comm-remote-test-02', '软件测试单元测试', ['单元测试'],
+    'REMOTE', '软件测试', 'L2_SUFFICIENT', 360),
+  communicationFixture('远端软件测试集成', 'comm-remote-test-03', '软件测试集成测试', ['集成测试'],
+    'REMOTE', '软件测试', 'L2_SUFFICIENT', 360),
+  communicationFixture('远端软件测试验收', 'comm-remote-test-04', '软件测试验收测试', ['验收测试'],
+    'REMOTE', '软件测试', 'L2_SUFFICIENT', 360),
+  communicationFixture('跨设备操作系统', 'comm-either-os-01', '操作系统进程', ['进程调度'],
+    'EITHER', '操作系统', 'L2_SUFFICIENT', 360),
+  communicationFixture('跨设备数据库', 'comm-either-db-01', '数据库事务', ['事务'],
+    'EITHER', '数据库', 'L2_SUFFICIENT', 360),
+  communicationFixture('跨设备网络', 'comm-either-net-01', '网络重传', ['重传'],
+    'EITHER', '网络', 'L2_SUFFICIENT', 360),
+  communicationFixture('跨设备测试', 'comm-either-test-01', '软件测试验收', ['验收测试'],
+    'EITHER', '软件测试', 'L2_SUFFICIENT', 360)
+];

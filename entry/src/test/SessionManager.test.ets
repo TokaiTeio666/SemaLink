@@ -3,9 +3,9 @@ import { AppError, ErrorStage } from '../main/ets/common/AppError';
 import { SequenceIdGenerator } from '../main/ets/common/IdGenerator';
 import { ConnectionState, PeerDevice } from '../main/ets/model/AppModels';
 import { ProtocolCodec } from '../main/ets/protocol/ProtocolCodec';
-import { MessageType, ProtocolEnvelope, QueryPayload, ResultPayload } from
+import { CancelPayload, MessageType, ProtocolEnvelope, QueryPayload, ResultPayload } from
   '../main/ets/protocol/ProtocolModels';
-import { SessionManager, SessionObserver } from '../main/ets/communication/SessionManager';
+import { ProtocolObserver, SessionManager, SessionObserver } from '../main/ets/communication/SessionManager';
 import { TransportListener } from '../main/ets/communication/Transport';
 import { FakeTransport } from './support/FakeTransport';
 import { FakeScheduler } from './support/FakeScheduler';
@@ -39,6 +39,14 @@ class TestObserver implements SessionObserver {
   }
 }
 
+class TestProtocolObserver implements ProtocolObserver {
+  envelopes: Array<ProtocolEnvelope> = [];
+
+  onProtocolEnvelope(envelope: ProtocolEnvelope): void {
+    this.envelopes.push(envelope);
+  }
+}
+
 export default function sessionManagerTest(): void {
   describe('SessionManager', () => {
     let transport: FakeTransport;
@@ -47,6 +55,7 @@ export default function sessionManagerTest(): void {
     let scheduler: FakeScheduler;
     let manager: SessionManager;
     let observer: TestObserver;
+    let protocolObserver: TestProtocolObserver;
 
     beforeEach(() => {
       transport = new FakeTransport();
@@ -54,8 +63,10 @@ export default function sessionManagerTest(): void {
       idGen = new SequenceIdGenerator(() => 1000);
       scheduler = new FakeScheduler();
       observer = new TestObserver();
+      protocolObserver = new TestProtocolObserver();
       manager = new SessionManager(transport, codec, idGen, scheduler, ACK_TIMEOUT_MS, RESULT_TIMEOUT_MS);
       manager.setObserver(observer);
+      manager.setProtocolObserver(protocolObserver);
     });
 
     it('completesQueryAfterAckAndResult', 0, async () => {
@@ -206,6 +217,28 @@ export default function sessionManagerTest(): void {
       expect(outcome.summary).assertEqual('ok');
     });
 
+    it('preservesRemoteErrorDetails', 0, async () => {
+      await manager.connect(PEER);
+      transport.emitConnected();
+
+      const pending = manager.execute('remote failure');
+      const query: ProtocolEnvelope = codec.decode(transport.sentMessages[0]);
+      const remoteError: ProtocolEnvelope = codec.createError(
+        'm2', query.sessionId, query.requestId, 1010,
+        { code: 'E_SYSTEM_401', message: 'PARAMETER ERROR' }
+      );
+      transport.emitMessage(codec.encode(remoteError));
+
+      let error: AppError | undefined;
+      try {
+        await pending;
+      } catch (caught) {
+        error = caught as AppError;
+      }
+      expect(error?.code).assertEqual('E_SYSTEM_401');
+      expect(error?.message).assertEqual('PARAMETER ERROR');
+    });
+
     it('cleansUpPendingOnDisconnect', 0, async () => {
       await manager.connect(PEER);
       transport.emitConnected();
@@ -256,6 +289,46 @@ export default function sessionManagerTest(): void {
 
       expect(observer.incomingQueries.length).assertEqual(1);
       expect(observer.incomingQueries[0].requestId).assertEqual('r1');
+    });
+
+    it('sendsSemanticEnvelopeAndCountsUtf8Bytes', 0, async () => {
+      await manager.connect(PEER);
+      transport.emitConnected();
+
+      const envelope: ProtocolEnvelope = codec.createCancel('semantic-message', 's1', 'task-1', 1000,
+        { taskId: 'task-1', code: 'E_CANCELLED', reason: 'semantic cancel' } as CancelPayload);
+      const expectedBytes: number = codec.encode(envelope).length;
+      await manager.sendEnvelope(envelope);
+
+      expect(transport.sentMessages.length).assertEqual(1);
+      expect(codec.decode(transport.sentMessages[0]).type).assertEqual(MessageType.CANCEL);
+      expect(observer.bytesSentTotal).assertLarger(expectedBytes - 1);
+    });
+
+    it('dispatchesP4EnvelopeOnlyOnceByMessageId', 0, async () => {
+      await manager.connect(PEER);
+      transport.emitConnected();
+
+      const envelope: ProtocolEnvelope = codec.createCancel('duplicate-message', 's1', 'task-1', 1000,
+        { taskId: 'task-1', code: 'E_CANCELLED', reason: 'semantic cancel' } as CancelPayload);
+      const text: string = codec.encode(envelope);
+      transport.emitMessage(text);
+      transport.emitMessage(text);
+
+      expect(protocolObserver.envelopes.length).assertEqual(1);
+      expect(protocolObserver.envelopes[0].messageId).assertEqual('duplicate-message');
+    });
+
+    it('doesNotDispatchAfterDestroy', 0, async () => {
+      await manager.connect(PEER);
+      transport.emitConnected();
+      manager.destroy();
+
+      const envelope: ProtocolEnvelope = codec.createCancel('after-destroy', 's1', 'task-1', 1000,
+        { taskId: 'task-1', code: 'E_CANCELLED', reason: 'semantic cancel' } as CancelPayload);
+      transport.emitMessage(codec.encode(envelope));
+
+      expect(protocolObserver.envelopes.length).assertEqual(0);
     });
 
     it('sendsErrorForBusyResponder', 0, async () => {

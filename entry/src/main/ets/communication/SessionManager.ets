@@ -3,8 +3,10 @@ import { SequenceIdGenerator } from '../common/IdGenerator';
 import { Scheduler } from '../common/Scheduler';
 import { ConnectionState, PeerDevice } from '../model/AppModels';
 import { ProtocolCodec } from '../protocol/ProtocolCodec';
-import { ErrorPayload, MessageType, ProtocolEnvelope, QueryAckPayload, QueryPayload, ResultPayload }
+import { ErrorPayload, MessageType, ProtocolEnvelope, QueryAckPayload, QueryPayload, ResultPayload,
+  TsfPayload }
   from '../protocol/ProtocolModels';
+import { TaskSufficiencyFeedback } from '../contracts/semantic/SemanticModels';
 import { Transport, TransportListener } from './Transport';
 
 export interface SessionObserver {
@@ -14,7 +16,12 @@ export interface SessionObserver {
   onError(error: AppError): void;
 }
 
+export interface ProtocolObserver {
+  onProtocolEnvelope(envelope: ProtocolEnvelope): void;
+}
+
 const NO_TIMER: number = -1;
+const MAX_HANDLED_MESSAGE_IDS: number = 256;
 
 class CompletedResult {
   requestId: string;
@@ -74,6 +81,7 @@ export class SessionManager implements TransportListener {
   private ackTimeoutMs: number;
   private resultTimeoutMs: number;
   private observer: SessionObserver | null = null;
+  private protocolObserver: ProtocolObserver | null = null;
   private appSessionId: string = '';
   private pendingRequestId: string | null = null;
   private ackTimerId: number = NO_TIMER;
@@ -86,6 +94,8 @@ export class SessionManager implements TransportListener {
   private destroyed: boolean = false;
   private pendingResolve: ((value: ResultPayload) => void) | null = null;
   private pendingReject: ((reason?: Object) => void) | null = null;
+  private handledMessageIds: Array<string> = [];
+  private handledTaskMessageIds: Array<{ taskId: string; messageId: string }> = [];
 
   constructor(
     transport: Transport,
@@ -118,6 +128,20 @@ export class SessionManager implements TransportListener {
 
   setObserver(observer: SessionObserver): void {
     this.observer = observer;
+  }
+
+  setProtocolObserver(observer: ProtocolObserver | null): void {
+    this.protocolObserver = observer;
+  }
+
+  async sendEnvelope(envelope: ProtocolEnvelope): Promise<void> {
+    if (this.destroyed) {
+      throw new AppError('E_SESSION_NOT_READY', '会话已销毁', ErrorStage.CONNECTION, false);
+    }
+    const text: string = this.codec.encode(envelope);
+    this.bytesSent += countUtf8Bytes(text);
+    this.notifyMetrics(0, 0);
+    await this.transport.send(text);
   }
 
   async connect(peer: PeerDevice): Promise<void> {
@@ -271,6 +295,18 @@ export class SessionManager implements TransportListener {
       return;
     }
 
+    if (this.isSemanticMessage(envelope.type)) {
+      if (arrayHas(this.handledMessageIds, envelope.messageId)) {
+        return;
+      }
+      this.rememberHandledMessage(envelope);
+      if (this.protocolObserver !== null) {
+        this.protocolObserver.onProtocolEnvelope(envelope);
+      }
+      this.clearCompletedTaskMessages(envelope);
+      return;
+    }
+
     switch (envelope.type) {
       case MessageType.QUERY:
         this.handleIncomingQuery(envelope);
@@ -393,7 +429,70 @@ export class SessionManager implements TransportListener {
     this.clearPending();
     this.transition(ConnectionState.CONNECTED);
     if (reject !== null) {
-      reject(new AppError('E_REMOTE_ERROR', '远端返回错误', ErrorStage.PROTOCOL, true));
+      const errorPayload: ErrorPayload = envelope.payload as ErrorPayload;
+      reject(new AppError(errorPayload.code, errorPayload.message, ErrorStage.PROTOCOL, true));
+    }
+  }
+
+  private isSemanticMessage(type: MessageType): boolean {
+    return type === MessageType.PROFILE || type === MessageType.TASK ||
+      type === MessageType.TASK_ACK || type === MessageType.EVIDENCE ||
+      type === MessageType.TSF || type === MessageType.CANCEL;
+  }
+
+  private rememberHandledMessage(envelope: ProtocolEnvelope): void {
+    this.handledMessageIds.push(envelope.messageId);
+    if (this.handledMessageIds.length > MAX_HANDLED_MESSAGE_IDS) {
+      const oldestMessageId: string = this.handledMessageIds.shift() as string;
+      for (let i = this.handledTaskMessageIds.length - 1; i >= 0; i--) {
+        if (this.handledTaskMessageIds[i].messageId === oldestMessageId) {
+          this.handledTaskMessageIds.splice(i, 1);
+        }
+      }
+    }
+    const taskId: string = this.semanticTaskId(envelope);
+    if (taskId.length > 0) {
+      this.handledTaskMessageIds.push({ taskId: taskId, messageId: envelope.messageId });
+    }
+  }
+
+  private semanticTaskId(envelope: ProtocolEnvelope): string {
+    if (envelope.type === MessageType.PROFILE) {
+      return '';
+    }
+    const payload: Record<string, Object> = envelope.payload as Record<string, Object>;
+    const taskId: Object | undefined = payload['taskId'];
+    if (typeof taskId === 'string') {
+      return taskId as string;
+    }
+    if (envelope.type === MessageType.TASK) {
+      const task: Record<string, Object> = payload['task'] as Record<string, Object>;
+      if (task !== undefined && typeof task['taskId'] === 'string') {
+        return task['taskId'] as string;
+      }
+    }
+    return '';
+  }
+
+  private clearCompletedTaskMessages(envelope: ProtocolEnvelope): void {
+    const taskId: string = this.semanticTaskId(envelope);
+    let completed: boolean = envelope.type === MessageType.CANCEL;
+    if (envelope.type === MessageType.TSF) {
+      const result: TsfPayload = envelope.payload as TsfPayload;
+      const feedback: TaskSufficiencyFeedback = result.result.feedback;
+      completed = feedback === 'ENOUGH' || feedback === 'ABORT';
+    }
+    if (!completed || taskId.length === 0) {
+      return;
+    }
+    for (let i = this.handledTaskMessageIds.length - 1; i >= 0; i--) {
+      if (this.handledTaskMessageIds[i].taskId === taskId) {
+        // Keep the terminal message id briefly so transport retries stay idempotent.
+        if (this.handledTaskMessageIds[i].messageId !== envelope.messageId) {
+          arrayRemove(this.handledMessageIds, this.handledTaskMessageIds[i].messageId);
+        }
+        this.handledTaskMessageIds.splice(i, 1);
+      }
     }
   }
 

@@ -22,6 +22,7 @@ export class KnowledgeApplicationService implements LocalKnowledgeGateway, Seman
   private userImporter?: UserDocumentImportCoordinator;
   private repository?: DocumentRepository;
   private database?: KnowledgeDatabase;
+  private initialization?: Promise<void>;
   private destroyed: boolean = false;
 
   async initialize(context: Context, sourceDeviceId: string = 'local-device'): Promise<void> {
@@ -31,6 +32,13 @@ export class KnowledgeApplicationService implements LocalKnowledgeGateway, Seman
     if (this.database !== undefined) {
       return;
     }
+    if (this.initialization === undefined) {
+      this.initialization = this.initializeComponents(context, sourceDeviceId);
+    }
+    await this.initialization;
+  }
+
+  private async initializeComponents(context: Context, sourceDeviceId: string): Promise<void> {
     const components: KnowledgeComponents = await KnowledgeCompositionRoot.create(context, sourceDeviceId);
     if (this.destroyed) {
       components.database.close();
@@ -66,6 +74,9 @@ export class KnowledgeApplicationService implements LocalKnowledgeGateway, Seman
   }
 
   async query(request: LocalKnowledgeQuery): Promise<LocalKnowledgeResult> {
+    if (this.initialization !== undefined) {
+      await this.initialization;
+    }
     if (this.gateway === undefined) {
       throw this.notInitialized();
     }
@@ -73,6 +84,9 @@ export class KnowledgeApplicationService implements LocalKnowledgeGateway, Seman
   }
 
   async getKnowledgeProfile(): Promise<KnowledgeProfile> {
+    if (this.initialization !== undefined) {
+      await this.initialization;
+    }
     if (this.gateway === undefined) {
       throw this.notInitialized();
     }
@@ -80,6 +94,9 @@ export class KnowledgeApplicationService implements LocalKnowledgeGateway, Seman
   }
 
   async searchEvidence(task: TaskRequest): Promise<EvidenceUnit[]> {
+    if (this.initialization !== undefined) {
+      await this.initialization;
+    }
     if (this.provider === undefined) {
       throw this.notInitialized();
     }
@@ -87,6 +104,9 @@ export class KnowledgeApplicationService implements LocalKnowledgeGateway, Seman
   }
 
   async getProfile(): Promise<KnowledgeProfile> {
+    if (this.initialization !== undefined) {
+      await this.initialization;
+    }
     if (this.provider === undefined) {
       throw this.notInitialized();
     }

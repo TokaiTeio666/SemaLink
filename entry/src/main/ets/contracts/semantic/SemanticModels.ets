@@ -4,6 +4,60 @@ export const SEMANTIC_CONTRACT_VERSION: '1.0' = '1.0';
 
 export type PrivacyLevel = 'LOCAL_ONLY' | 'PRIVATE_GROUP';
 export type EvidenceLevel = 'L1' | 'L2';
+export type PayloadLevel = 'L0' | 'L1' | 'L2' | 'L3';
+export type TaskPhase =
+  | 'PENDING'
+  | 'ROUTING'
+  | 'AWAITING_L1'
+  | 'EVALUATING_L1'
+  | 'NEED_MORE'
+  | 'AWAITING_L2'
+  | 'EVALUATING_L2'
+  | 'SUFFICIENT'
+  | 'ABORTED'
+  | 'FAILED';
+export type TaskSufficiencyFeedback = 'ENOUGH' | 'NEED_MORE' | 'ABORT';
+
+export const DEFAULT_REQUIRED_CONFIDENCE: number = 0.80;
+export const DEFAULT_COVERAGE_THRESHOLD: number = 0.80;
+
+export interface TaskSufficiencyResult {
+  feedback: TaskSufficiencyFeedback;
+  coverage: number;
+  confidence: number;
+  diversity: number;
+  coveredConcepts: string[];
+  missingConcepts: string[];
+  acceptedEvidenceIds: string[];
+}
+
+export interface DeviceRuntimeSnapshot {
+  deviceId: string;
+  deviceAlias: string;
+  isLocal: boolean;
+  state: 'READY' | 'BUSY' | 'OFFLINE';
+  profileVersion: string;
+  indexVersion: string;
+  lastSeenAtMs: number;
+  averageRttMs: number;
+  load: number;
+  advertisedAtMs: number;
+}
+
+export interface DeviceProfileAdvertisement {
+  semanticContractVersion: '1.0';
+  deviceId: string;
+  deviceAlias: string;
+  profileVersion: string;
+  indexVersion: string;
+  indexState: 'NOT_READY' | 'INDEXING' | 'READY';
+  knowledgeDomains: string[];
+  modalities: string[];
+  retrievalModes: string[];
+  supportedLevels: EvidenceLevel[];
+  advertisedAtMs: number;
+  ttlMs: number;
+}
 
 export interface TaskRequestFilters {
   documentIds?: string[];

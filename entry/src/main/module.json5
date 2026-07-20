@@ -58,6 +58,20 @@
             "resource": "$profile:backup_config"
           }
         ],
+      },
+      {
+        "name": "SemaLinkAgentExtensionAbility",
+        "icon": "$media:startIcon",
+        "description": "$string:SemaLinkAgentExtensionAbility_desc",
+        "type": "agent",
+        "exported": true,
+        "srcEntry": "./ets/agent/SemaLinkAgentExtensionAbility.ets",
+        "metadata": [
+          {
+            "name": "ohos.extension.agent",
+            "resource": "$profile:agent_config"
+          }
+        ]
       }
     ]
   }

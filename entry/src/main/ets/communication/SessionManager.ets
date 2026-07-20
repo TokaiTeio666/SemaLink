@@ -3,8 +3,8 @@ import { SequenceIdGenerator } from '../common/IdGenerator';
 import { Scheduler } from '../common/Scheduler';
 import { ConnectionState, PeerDevice } from '../model/AppModels';
 import { ProtocolCodec } from '../protocol/ProtocolCodec';
-import { ErrorPayload, MessageType, ProtocolEnvelope, QueryAckPayload, QueryPayload, ResultPayload,
-  TsfPayload }
+import { CancelPayload, ErrorPayload, EvidencePayload, MessageType, ProtocolEnvelope, QueryAckPayload,
+  QueryPayload, ResultPayload, TaskAckPayload, TaskPayload, TsfPayload }
   from '../protocol/ProtocolModels';
 import { TaskSufficiencyFeedback } from '../contracts/semantic/SemanticModels';
 import { Transport, TransportListener } from './Transport';
@@ -30,6 +30,16 @@ class CompletedResult {
   constructor(requestId: string, payload: ResultPayload) {
     this.requestId = requestId;
     this.payload = payload;
+  }
+}
+
+class HandledTaskMessage {
+  taskId: string;
+  messageId: string;
+
+  constructor(taskId: string, messageId: string) {
+    this.taskId = taskId;
+    this.messageId = messageId;
   }
 }
 
@@ -95,7 +105,7 @@ export class SessionManager implements TransportListener {
   private pendingResolve: ((value: ResultPayload) => void) | null = null;
   private pendingReject: ((reason?: Object) => void) | null = null;
   private handledMessageIds: Array<string> = [];
-  private handledTaskMessageIds: Array<{ taskId: string; messageId: string }> = [];
+  private handledTaskMessageIds: Array<HandledTaskMessage> = [];
 
   constructor(
     transport: Transport,
@@ -452,24 +462,32 @@ export class SessionManager implements TransportListener {
     }
     const taskId: string = this.semanticTaskId(envelope);
     if (taskId.length > 0) {
-      this.handledTaskMessageIds.push({ taskId: taskId, messageId: envelope.messageId });
+      this.handledTaskMessageIds.push(
+        new HandledTaskMessage(taskId, envelope.messageId)
+      );
     }
   }
 
   private semanticTaskId(envelope: ProtocolEnvelope): string {
-    if (envelope.type === MessageType.PROFILE) {
-      return '';
-    }
-    const payload: Record<string, Object> = envelope.payload as Record<string, Object>;
-    const taskId: Object | undefined = payload['taskId'];
-    if (typeof taskId === 'string') {
-      return taskId as string;
-    }
     if (envelope.type === MessageType.TASK) {
-      const task: Record<string, Object> = payload['task'] as Record<string, Object>;
-      if (task !== undefined && typeof task['taskId'] === 'string') {
-        return task['taskId'] as string;
-      }
+      const payload: TaskPayload = envelope.payload as TaskPayload;
+      return payload.task.taskId;
+    }
+    if (envelope.type === MessageType.TASK_ACK) {
+      const payload: TaskAckPayload = envelope.payload as TaskAckPayload;
+      return payload.taskId;
+    }
+    if (envelope.type === MessageType.EVIDENCE) {
+      const payload: EvidencePayload = envelope.payload as EvidencePayload;
+      return payload.taskId;
+    }
+    if (envelope.type === MessageType.TSF) {
+      const payload: TsfPayload = envelope.payload as TsfPayload;
+      return payload.taskId;
+    }
+    if (envelope.type === MessageType.CANCEL) {
+      const payload: CancelPayload = envelope.payload as CancelPayload;
+      return payload.taskId;
     }
     return '';
   }

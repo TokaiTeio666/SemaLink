@@ -6,7 +6,10 @@ import { KnowledgeProfile } from '../contracts/knowledge/KnowledgeModels';
 import { ErrorPayload, EvidencePayload, MessageType, ProtocolEnvelope, ProfilePayload, TaskPayload,
   TsfPayload } from '../protocol/ProtocolModels';
 import { ProtocolCodec } from '../protocol/ProtocolCodec';
-import { SessionManager } from './SessionManager';
+import {
+  ProtocolObserver,
+  SessionManager
+} from './SessionManager';
 import { DeviceDirectory } from './DeviceDirectory';
 import { DeviceSemanticRouter } from './DeviceSemanticRouter';
 import { EvidenceUtilityScheduler } from './EvidenceUtilityScheduler';
@@ -14,7 +17,7 @@ import { TaskSufficiencyEvaluator } from './TaskSufficiencyEvaluator';
 import { AppStateStore } from '../state/AppStateStore';
 import { utf8ByteLength } from '../knowledge/payload/Utf8Sizer';
 
-export class ProgressiveQueryCoordinator {
+export class ProgressiveQueryCoordinator implements ProtocolObserver {
   private readonly session: SessionManager;
   private readonly store: AppStateStore;
   private readonly provider: SemanticKnowledgeProvider;
@@ -106,8 +109,16 @@ export class ProgressiveQueryCoordinator {
       if (error instanceof AppError && error.code === 'E_CANCELLED') {
         throw error;
       }
-      this.store.update({ taskPhase: 'FAILED', knowledgeError: error instanceof Error ? error.message : 'Semantic task failed' });
-      throw error;
+
+      const failure: Error = error instanceof Error
+        ? error
+        : new Error('Semantic task failed');
+
+      this.store.update({
+        taskPhase: 'FAILED',
+        knowledgeError: failure.message
+      });
+      throw failure;
     } finally {
       if (this.activeTaskId === task.taskId) {
         this.activeTaskId = null;

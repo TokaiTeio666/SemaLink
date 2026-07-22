@@ -20,6 +20,17 @@ function makeInput(id: string, createdAt: number): CollaborationRecordInput {
   };
 }
 
+function makeAutomaticInput(id: string, createdAt: number): CollaborationRecordInput {
+  return {
+    id: id,
+    question: 'automatic question',
+    sourceDeviceName: 'local',
+    targetDeviceName: 'automatic',
+    sourceDeviceNames: ['work tablet', 'living room tablet'],
+    createdAt: createdAt
+  };
+}
+
 export default function collaborationRecordStateTest(): void {
   describe('CollaborationRecordState', () => {
     it('createSendingRecordProducesSendingStatusAndDefaults', 0, () => {
@@ -181,6 +192,28 @@ export default function collaborationRecordStateTest(): void {
       expect(records[0].id).assertEqual('r3');
       expect(records[1].id).assertEqual('r1');
       expect(records[2].id).assertEqual('r2');
+    });
+
+    it('retainsMultipleAutomaticSourcesAcrossCloneSortAndUpdate', 0, () => {
+      const record: CollaborationRecord = createSendingRecord(makeAutomaticInput('automatic-1', 3000));
+      const sorted: Array<CollaborationRecord> = sortCollaborationRecords([record]);
+      const updated: Array<CollaborationRecord> = updateCollaborationRecord('automatic-1', sorted, {
+        status: CollaborationRecordStatus.SYNCED,
+        evidenceCount: 4
+      });
+
+      expect(sorted[0].sourceDeviceNames.length).assertEqual(2);
+      expect(sorted[0].sourceDeviceNames[0]).assertEqual('work tablet');
+      expect(sorted[0].sourceDeviceNames[1]).assertEqual('living room tablet');
+      expect(updated[0].sourceDeviceNames.length).assertEqual(2);
+      expect(updated[0].sourceDeviceNames[0]).assertEqual('work tablet');
+      expect(updated[0].sourceDeviceNames[1]).assertEqual('living room tablet');
+      expect(updated[0].evidenceCount).assertEqual(4);
+    });
+
+    it('usesAnEmptySourceListForLegacyInputs', 0, () => {
+      const record: CollaborationRecord = createSendingRecord(makeInput('legacy-1', 1000));
+      expect(record.sourceDeviceNames.length).assertEqual(0);
     });
   });
 }

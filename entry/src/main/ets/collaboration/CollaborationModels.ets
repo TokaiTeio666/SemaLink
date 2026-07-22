@@ -10,6 +10,7 @@ export interface CollaborationRecord {
   id: string;
   question: string;
   sourceDeviceName: string;
+  sourceDeviceNames: string[];
   targetDeviceName: string;
   createdAt: number;
   status: CollaborationRecordStatus;
@@ -22,6 +23,7 @@ export interface CollaborationRecordInput {
   id: string;
   question: string;
   sourceDeviceName: string;
+  sourceDeviceNames?: string[];
   targetDeviceName: string;
   createdAt: number;
 }
@@ -38,6 +40,7 @@ function cloneRecord(source: CollaborationRecord): CollaborationRecord {
     id: source.id,
     question: source.question,
     sourceDeviceName: source.sourceDeviceName,
+    sourceDeviceNames: (source.sourceDeviceNames ?? []).slice(),
     targetDeviceName: source.targetDeviceName,
     createdAt: source.createdAt,
     status: source.status,
@@ -52,6 +55,7 @@ export function createSendingRecord(input: CollaborationRecordInput): Collaborat
     id: input.id,
     question: input.question,
     sourceDeviceName: input.sourceDeviceName,
+    sourceDeviceNames: input.sourceDeviceNames?.slice() ?? [],
     targetDeviceName: input.targetDeviceName,
     createdAt: input.createdAt,
     status: CollaborationRecordStatus.SENDING,
@@ -74,6 +78,7 @@ export function updateCollaborationRecord(
         id: current.id,
         question: current.question,
         sourceDeviceName: current.sourceDeviceName,
+        sourceDeviceNames: (current.sourceDeviceNames ?? []).slice(),
         targetDeviceName: current.targetDeviceName,
         createdAt: current.createdAt,
         status: updates.status ?? current.status,

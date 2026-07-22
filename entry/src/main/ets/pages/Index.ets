@@ -16,6 +16,7 @@ const EMPTY_COLLABORATION_RECORD: CollaborationRecord = {
   id: '',
   question: '',
   sourceDeviceName: '',
+  sourceDeviceNames: [],
   targetDeviceName: '',
   createdAt: 0,
   status: CollaborationRecordStatus.SENDING,

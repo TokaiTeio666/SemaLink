@@ -53,6 +53,9 @@ export default class EntryAbility extends UIAbility {
         return;
       }
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
+      AppRuntime.current().initializeKnowledge(this.context).catch((error: Error) => {
+        hilog.error(DOMAIN, 'testTag', 'Knowledge initialization failed: %{public}s', error.message);
+      });
       this.requestDistributedPermission()
         .then((granted: boolean) => {
           hilog.info(DOMAIN, 'testTag', 'permission_request_finished: %{public}s',

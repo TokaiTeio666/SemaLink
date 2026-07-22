@@ -7,11 +7,11 @@
         "material": {
           "certpath": "C:\\Users\\admin\\.ohos\\config\\default_SemaLink_CDs7CW0S6yrPmQNpDDyCrESLVMAqxZStwTp6ThWFawc=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001B51723730D4934C5012F56A38527E1038218AE13E67D1D6E04A39EA8B7C90ECBF2F1ECF189503C8",
+          "keyPassword": "0000001B365CD997F054B6D000A19A1E95BD71578C3DBF89FCDA8B95283EDDDC20968D268EDC327A3C3B87",
           "profile": "C:\\Users\\admin\\.ohos\\config\\default_SemaLink_CDs7CW0S6yrPmQNpDDyCrESLVMAqxZStwTp6ThWFawc=.p7b",
           "signAlg": "SHA256withECDSA",
           "storeFile": "C:\\Users\\admin\\.ohos\\config\\default_SemaLink_CDs7CW0S6yrPmQNpDDyCrESLVMAqxZStwTp6ThWFawc=.p12",
-          "storePassword": "0000001B0D8A1883A99F31F271927534569333C861CCFF3CB4BEF5BFD3D9B16ECB18C164B37B7AC63E9290"
+          "storePassword": "0000001B014456E9BA88A87B863E50802D1C1AD0D2E7B36582ECD0348187FA244EEA936B5ED696BD4D4834"
         }
       }
     ],

@@ -3,6 +3,7 @@ import { DisplayKnowledgeItem, KnowledgeQueryDisplayStatus } from '../applicatio
 import { KnowledgeIndexState, KnowledgePayloadLevel } from '../contracts/knowledge/KnowledgeModels';
 import { CollaborationRecord } from '../collaboration/CollaborationModels';
 import { TaskPhase, TaskSufficiencyFeedback } from '../contracts/semantic/SemanticModels';
+import { AutomaticQueryProgress } from '../application/AutomaticQueryPolicy';
 
 export type ControlChannelState = 'DISCONNECTED' | 'CONNECTING' | 'READY' | 'FAILED';
 export type DataChannelState = 'DISCONNECTED' | 'CONNECTING' | 'BINDING' | 'READY' | 'FAILED';
@@ -44,6 +45,9 @@ export interface PeerStatusSnapshot {
 }
 
 export interface AppSnapshot {
+  automaticQueryProgress: AutomaticQueryProgress;
+  automaticSourceNames: string[];
+  automaticExcludedSourceNames: string[];
   peerStatuses: PeerStatusSnapshot[];
   activePeerCount: number;
   evidenceSourceDeviceIds: string[];
@@ -100,6 +104,9 @@ export interface AppSnapshot {
 }
 
 export const INITIAL_SNAPSHOT: AppSnapshot = {
+  automaticQueryProgress: 'IDLE',
+  automaticSourceNames: [],
+  automaticExcludedSourceNames: [],
   peerStatuses: [],
   activePeerCount: 0,
   evidenceSourceDeviceIds: [],
@@ -161,6 +168,9 @@ export function cloneSnapshot(
   error?: AppError
 ): AppSnapshot {
   return {
+    automaticQueryProgress: base.automaticQueryProgress,
+    automaticSourceNames: base.automaticSourceNames,
+    automaticExcludedSourceNames: base.automaticExcludedSourceNames,
     peerStatuses: base.peerStatuses,
     activePeerCount: base.activePeerCount,
     evidenceSourceDeviceIds: base.evidenceSourceDeviceIds,

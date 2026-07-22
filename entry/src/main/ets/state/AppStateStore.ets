@@ -23,6 +23,9 @@ export class AppStateStore {
 
   update(next: StateUpdate): void {
     const updated: AppSnapshot = {
+      automaticQueryProgress: next.automaticQueryProgress ?? this.current.automaticQueryProgress,
+      automaticSourceNames: next.automaticSourceNames ?? this.current.automaticSourceNames,
+      automaticExcludedSourceNames: next.automaticExcludedSourceNames ?? this.current.automaticExcludedSourceNames,
       peerStatuses: next.peerStatuses ?? this.current.peerStatuses,
       activePeerCount: next.activePeerCount ?? this.current.activePeerCount,
       evidenceSourceDeviceIds: next.evidenceSourceDeviceIds ?? this.current.evidenceSourceDeviceIds,

@@ -10,8 +10,18 @@ export interface DeviceRoutingCandidate {
   profile: DeviceProfileAdvertisement;
 }
 
-export type ControlChannelState = 'DISCONNECTED' | 'CONNECTING' | 'READY' | 'FAILED';
-export type DataChannelState = 'DISCONNECTED' | 'CONNECTING' | 'BINDING' | 'READY' | 'FAILED';
+export type ControlChannelState =
+  'DISCONNECTED' |
+  'CONNECTING' |
+  'READY' |
+  'FAILED';
+
+export type DataChannelState =
+  'DISCONNECTED' |
+  'CONNECTING' |
+  'BINDING' |
+  'READY' |
+  'FAILED';
 
 export interface DirectoryEntry {
   snapshot: DeviceRuntimeSnapshot;
@@ -22,7 +32,9 @@ export interface DirectoryEntry {
   lastFailureCode: string;
 }
 
-function cloneSnapshot(snapshot: DeviceRuntimeSnapshot): DeviceRuntimeSnapshot {
+function cloneSnapshot(
+  snapshot: DeviceRuntimeSnapshot
+): DeviceRuntimeSnapshot {
   return {
     deviceId: snapshot.deviceId,
     deviceAlias: snapshot.deviceAlias,
@@ -37,7 +49,9 @@ function cloneSnapshot(snapshot: DeviceRuntimeSnapshot): DeviceRuntimeSnapshot {
   };
 }
 
-function cloneProfile(profile: DeviceProfileAdvertisement): DeviceProfileAdvertisement {
+function cloneProfile(
+  profile: DeviceProfileAdvertisement
+): DeviceProfileAdvertisement {
   return {
     semanticContractVersion: profile.semanticContractVersion,
     deviceId: profile.deviceId,
@@ -56,17 +70,27 @@ function cloneProfile(profile: DeviceProfileAdvertisement): DeviceProfileAdverti
 
 export class DeviceDirectory {
   private readonly clock: () => number;
+
   private local: DirectoryEntry | null = null;
-  private readonly remotes: Map<string, DirectoryEntry> = new Map<string, DirectoryEntry>();
+
+  private readonly remotes: Map<string, DirectoryEntry> =
+    new Map<string, DirectoryEntry>();
 
   constructor(clock: () => number = (): number => Date.now()) {
     this.clock = clock;
   }
 
-  setLocal(snapshot: DeviceRuntimeSnapshot, profile: DeviceProfileAdvertisement): void {
+  setLocal(
+    snapshot: DeviceRuntimeSnapshot,
+    profile: DeviceProfileAdvertisement
+  ): void {
     this.local = {
-      snapshot: cloneSnapshot(snapshot), profile: cloneProfile(profile), controlState: 'READY', dataState: 'READY',
-      endpointVersion: 0, lastFailureCode: ''
+      snapshot: cloneSnapshot(snapshot),
+      profile: cloneProfile(profile),
+      controlState: 'READY',
+      dataState: 'READY',
+      endpointVersion: 0,
+      lastFailureCode: ''
     };
   }
 
@@ -75,14 +99,22 @@ export class DeviceDirectory {
   }
 
   upsertRemote(profile: DeviceProfileAdvertisement): void {
-    const storedProfile: DeviceProfileAdvertisement = cloneProfile(profile);
-    const previous: DirectoryEntry | undefined = this.remotes.get(storedProfile.deviceId);
-    const advertisedAtMs: number = storedProfile.advertisedAtMs;
+    const storedProfile: DeviceProfileAdvertisement =
+      cloneProfile(profile);
+
+    const previous: DirectoryEntry | undefined =
+      this.remotes.get(storedProfile.deviceId);
+
+    const advertisedAtMs: number =
+      storedProfile.advertisedAtMs;
+
     const snapshot: DeviceRuntimeSnapshot = {
       deviceId: storedProfile.deviceId,
       deviceAlias: storedProfile.deviceAlias,
       isLocal: false,
-      state: profile.indexState === 'READY' ? 'READY' : 'BUSY',
+      state: storedProfile.indexState === 'READY'
+        ? 'READY'
+        : 'BUSY',
       profileVersion: storedProfile.profileVersion,
       indexVersion: storedProfile.indexVersion,
       lastSeenAtMs: advertisedAtMs,
@@ -90,13 +122,22 @@ export class DeviceDirectory {
       load: 0,
       advertisedAtMs: advertisedAtMs
     };
+
     this.remotes.set(storedProfile.deviceId, {
       snapshot: snapshot,
       profile: storedProfile,
-      controlState: previous === undefined ? 'DISCONNECTED' : previous.controlState,
-      dataState: previous === undefined ? 'DISCONNECTED' : previous.dataState,
-      endpointVersion: previous === undefined ? 0 : previous.endpointVersion,
-      lastFailureCode: previous === undefined ? '' : previous.lastFailureCode
+      controlState: previous === undefined
+        ? 'DISCONNECTED'
+        : previous.controlState,
+      dataState: previous === undefined
+        ? 'DISCONNECTED'
+        : previous.dataState,
+      endpointVersion: previous === undefined
+        ? 0
+        : previous.endpointVersion,
+      lastFailureCode: previous === undefined
+        ? ''
+        : previous.lastFailureCode
     });
   }
 
@@ -110,60 +151,102 @@ export class DeviceDirectory {
 
   pruneExpired(): string[] {
     const removed: string[] = [];
+
     for (const deviceId of this.remotes.keys()) {
-      const entry: DirectoryEntry | undefined = this.remotes.get(deviceId);
+      const entry: DirectoryEntry | undefined =
+        this.remotes.get(deviceId);
+
       if (entry === undefined) {
         continue;
       }
+
       if (!this.isRemoteFresh(entry)) {
         this.remotes.delete(deviceId);
         removed.push(deviceId);
       }
     }
+
     removed.sort();
     return removed;
   }
 
   snapshot(): DeviceRuntimeSnapshot[] {
     const result: DeviceRuntimeSnapshot[] = [];
+
     if (this.local !== null) {
       result.push(cloneSnapshot(this.local.snapshot));
     }
-    const remotes: DirectoryEntry[] = this.sortedRemotes();
+
+    const remotes: DirectoryEntry[] =
+      this.sortedRemotes();
+
     for (const remote of remotes) {
       if (this.isRemoteFresh(remote)) {
         result.push(cloneSnapshot(remote.snapshot));
       }
     }
+
     return result;
   }
 
   candidates(): DeviceRoutingCandidate[] {
     const result: DeviceRoutingCandidate[] = [];
+
     if (this.local !== null) {
-      result.push({ snapshot: cloneSnapshot(this.local.snapshot), profile: cloneProfile(this.local.profile) });
+      result.push({
+        snapshot: cloneSnapshot(this.local.snapshot),
+        profile: cloneProfile(this.local.profile)
+      });
     }
+
     for (const remote of this.sortedRemotes()) {
       if (this.isRemoteFresh(remote)) {
-        result.push({ snapshot: cloneSnapshot(remote.snapshot), profile: cloneProfile(remote.profile) });
+        result.push({
+          snapshot: cloneSnapshot(remote.snapshot),
+          profile: cloneProfile(remote.profile)
+        });
       }
     }
+
     return result;
   }
 
   private sortedRemotes(): DirectoryEntry[] {
     const result: DirectoryEntry[] = [];
+
     for (const entry of this.remotes.values()) {
       result.push(entry);
     }
-    result.sort((left: DirectoryEntry, right: DirectoryEntry): number =>
-      left.snapshot.deviceId < right.snapshot.deviceId ? -1 :
-        (left.snapshot.deviceId > right.snapshot.deviceId ? 1 : 0));
+
+    result.sort(
+      (
+        left: DirectoryEntry,
+        right: DirectoryEntry
+      ): number => {
+        if (left.snapshot.deviceId <
+          right.snapshot.deviceId) {
+          return -1;
+        }
+
+        if (left.snapshot.deviceId >
+          right.snapshot.deviceId) {
+          return 1;
+        }
+
+        return 0;
+      }
+    );
+
     return result;
   }
 
   private isRemoteFresh(entry: DirectoryEntry): boolean {
-    const ttlMs: number = entry.profile.ttlMs > 0 ? entry.profile.ttlMs : REMOTE_PROFILE_TTL_MS;
-    return this.clock() - entry.profile.advertisedAtMs <= ttlMs;
+    const ttlMs: number =
+      entry.profile.ttlMs > 0
+        ? entry.profile.ttlMs
+        : REMOTE_PROFILE_TTL_MS;
+
+    return this.clock() -
+      entry.profile.advertisedAtMs <= ttlMs;
   }
 }

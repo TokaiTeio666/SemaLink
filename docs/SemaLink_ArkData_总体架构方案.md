@@ -595,7 +595,7 @@ function scheduleEvidence(task, evidenceSet, state):
 
 HarmonyOS Socket 支持 TCP/UDP/Multicast/TLS；跨设备连接 UIAbility 从 API 18 起支持，要求同账号、同 `bundleName`；ArkData 提供存储、同步与向量数据库能力；MindSpore Lite 提供端侧推理。
 
-### 数据库选型边界：ArkData，不是 GaussDB
+### 数据库选型边界：ArkData
 
 本项目中的“鸿蒙原生数据库”统一指 **ArkData**：
 

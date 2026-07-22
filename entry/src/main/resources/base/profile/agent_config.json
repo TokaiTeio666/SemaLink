@@ -1,0 +1,61 @@
+{
+  "agentCards": [
+    {
+      "agentId": "semalink_knowledge_agent",
+      "name": "SemaLink",
+      "description": "面向可信设备的跨设备本地知识检索与协同问答智能体",
+      "provider": {
+        "organization": "SemaLink Team",
+        "url": "https://github.com/TokaiTeio666/SemaLink"
+      },
+      "version": "1.0.0",
+      "documentationUrl": "https://github.com/TokaiTeio666/SemaLink",
+      "capabilities": {
+        "streaming": false,
+        "pushNotifications": false,
+        "stateTransitionHistory": false,
+        "extendedAgentCard": false
+      },
+      "defaultInputModes": [
+        "text/plain"
+      ],
+      "defaultOutputModes": [
+        "text/plain"
+      ],
+      "skills": [
+        {
+          "id": "cross_device_knowledge_query",
+          "name": "跨设备知识查询",
+          "description": "在可信设备之间检索本地知识并返回相关结果",
+          "tags": [
+            "跨设备",
+            "本地知识",
+            "知识检索",
+            "协同问答"
+          ],
+          "examples": [
+            "帮我查询其他设备上的数据库知识",
+            "在我的设备中查找操作系统相关资料",
+            "使用 SemaLink 回答这个问题"
+          ],
+          "inputModes": [
+            "text/plain"
+          ],
+          "outputModes": [
+            "text/plain"
+          ],
+          "extension": ""
+        }
+      ],
+      "iconUrl": "https://raw.githubusercontent.com/BangShou1st/SemaLink-assets/main/agent_icon.png",
+      "category": "效率工具",
+      "appInfo": {
+        "deviceTypes": [
+          "phone",
+          "tablet"
+        ],
+        "minAppVersion": "1.0.0"
+      }
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{"type":"server-started","port":60397,"host":"0.0.0.0","url_host":"localhost","url":"http://localhost:60397","screen_dir":"C:\\Users\\admin\\DevEcoStudioProjects\\SemaLink\\.superpowers\\brainstorm\\20260716-ui\\content","state_dir":"C:\\Users\\admin\\DevEcoStudioProjects\\SemaLink\\.superpowers\\brainstorm\\20260716-ui\\state"}
+{"source":"user-event","type":"click","text":"发送到另一台设备\n        选择要接力的内容\n        数据库事务设计知识查询结果 · 4 条证据\n        平板 B● 在线笔记本 C● 在线\n        发送并在目标设备打开\n      \n    \n    任务接力优先直接围绕“把当前内容交给另一台设备”设计，路径短，适合高频传递查询结果或文档上下文。","choice":"handoff-first","id":null,"timestamp":1784218883124}
+{"source":"user-event","type":"click","text":"发送到另一台设备\n        选择要接力的内容\n        数据库事务设计知识查询结果 · 4 条证据\n        平板 B● 在线笔记本 C● 在线\n        发送并在目标设备打开\n      \n    \n    任务接力优先直接围绕“把当前内容交给另一台设备”设计，路径短，适合高频传递查询结果或文档上下文。","choice":"handoff-first","id":null,"timestamp":1784218886029}
+{"source":"user-event","type":"click","text":"发送到另一台设备\n        选择要接力的内容\n        数据库事务设计知识查询结果 · 4 条证据\n        平板 B● 在线笔记本 C● 在线\n        发送并在目标设备打开\n      \n    \n    任务接力优先直接围绕“把当前内容交给另一台设备”设计，路径短，适合高频传递查询结果或文档上下文。","choice":"handoff-first","id":null,"timestamp":1784218886529}
+{"source":"user-event","type":"click","text":"发送到另一台设备\n        选择要接力的内容\n        数据库事务设计知识查询结果 · 4 条证据\n        平板 B● 在线笔记本 C● 在线\n        发送并在目标设备打开\n      \n    \n    任务接力优先直接围绕“把当前内容交给另一台设备”设计，路径短，适合高频传递查询结果或文档上下文。","choice":"handoff-first","id":null,"timestamp":1784218886677}
+{"type":"screen-updated","file":"C:\\Users\\admin\\DevEcoStudioProjects\\SemaLink\\.superpowers\\brainstorm\\20260716-ui\\content\\device-collaboration-layouts.html"}
+{"type":"screen-added","file":"C:\\Users\\admin\\DevEcoStudioProjects\\SemaLink\\.superpowers\\brainstorm\\20260716-ui\\content\\activity-record-detail.html"}
+{"source":"user-event","type":"click","text":"最近活动数据库事务设计14:38 · 平板 B语义查询上下文14:32 · 手机 A项目需求说明昨天 · 手机 A\n        活动详情数据库事务设计已发送到平板 B查询证据01 事务边界定义02 数据库索引策略03 一致性验证结果继续查询\n      \n    \n    列表 + 详情左侧浏览活动，右侧立即查看证据和上下文，适合需要审阅结果而不是只看事件状态的用户。","choice":"split-detail","id":null,"timestamp":1784221608991}
+{"type":"screen-added","file":"C:\\Users\\admin\\DevEcoStudioProjects\\SemaLink\\.superpowers\\brainstorm\\20260716-ui\\content\\split-detail-actions.html"}
+{"type":"screen-updated","file":"C:\\Users\\admin\\DevEcoStudioProjects\\SemaLink\\.superpowers\\brainstorm\\20260716-ui\\content\\activity-record-detail.html"}
+{"type":"screen-updated","file":"C:\\Users\\admin\\DevEcoStudioProjects\\SemaLink\\.superpowers\\brainstorm\\20260716-ui\\content\\device-collaboration-layouts.html"}
+{"type":"screen-updated","file":"C:\\Users\\admin\\DevEcoStudioProjects\\SemaLink\\.superpowers\\brainstorm\\20260716-ui\\content\\split-detail-actions.html"}
+{"type":"screen-updated","file":"C:\\Users\\admin\\DevEcoStudioProjects\\SemaLink\\.superpowers\\brainstorm\\20260716-ui\\content\\activity-record-detail.html"}
+{"type":"screen-updated","file":"C:\\Users\\admin\\DevEcoStudioProjects\\SemaLink\\.superpowers\\brainstorm\\20260716-ui\\content\\device-collaboration-layouts.html"}
+{"type":"screen-updated","file":"C:\\Users\\admin\\DevEcoStudioProjects\\SemaLink\\.superpowers\\brainstorm\\20260716-ui\\content\\split-detail-actions.html"}
+{"type":"screen-updated","file":"C:\\Users\\admin\\DevEcoStudioProjects\\SemaLink\\.superpowers\\brainstorm\\20260716-ui\\content\\activity-record-detail.html"}
+{"type":"screen-updated","file":"C:\\Users\\admin\\DevEcoStudioProjects\\SemaLink\\.superpowers\\brainstorm\\20260716-ui\\content\\device-collaboration-layouts.html"}
+{"type":"screen-updated","file":"C:\\Users\\admin\\DevEcoStudioProjects\\SemaLink\\.superpowers\\brainstorm\\20260716-ui\\content\\split-detail-actions.html"}
+{"type":"server-stopped","reason":"idle timeout"}

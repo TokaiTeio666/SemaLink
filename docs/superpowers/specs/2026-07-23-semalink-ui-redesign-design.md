@@ -1,47 +1,47 @@
-# SemaLink UI Redesign Design
+# SemaLink 中文 UI 重设计方案
 
-## Goal
+## 目标
 
-Align the existing HarmonyOS ArkTS UI with the supplied SemaLink reference image while preserving the current query, device discovery, progress, evidence, and history behavior.
+在保留现有查询、设备发现、进度、证据和历史记录行为的前提下，将现有 HarmonyOS ArkTS 界面调整为用户提供的 SemaLink 设计图风格。
 
-## Scope
+## 范围
 
-- Rework `Index`, `DeviceOverview`, `QueryHome`, and `QueryHistory` presentation.
-- Replace the current top pill navigation with a fixed three-item bottom navigation for query, devices, and history.
-- Use Chinese labels and the reference information hierarchy.
-- Keep diagnostics available through existing internal code, but remove it from the primary navigation.
-- Keep all existing `AppRuntime` actions and `AppSnapshot` fields as the source of truth.
+- 重构 `Index`、`DeviceOverview`、`QueryHome` 和 `QueryHistory` 的界面表现。
+- 将当前顶部胶囊导航改为查询、设备、历史三个入口组成的固定底部导航。
+- 使用中文文案，并遵循设计图的信息层级。
+- 保留现有诊断能力，但不将诊断放入主导航。
+- 继续以现有 `AppRuntime` 操作和 `AppSnapshot` 字段作为数据来源。
 
-## UI Structure
+## 界面结构
 
-### Query page
+### 查询页
 
-The page uses a compact header with a menu affordance, centered SemaLink title, and notification affordance. It shows the online-device summary, a single-line query input with send action, query scope chips, a vertical progress timeline, and an answer summary with confidence and evidence/source affordances.
+页面使用紧凑顶部栏，包含菜单入口、居中的 SemaLink 标题和通知入口。页面展示在线设备摘要、带发送操作的单行查询框、查询范围标签、纵向查询进度时间线，以及包含可信度和证据/来源入口的答案摘要。
 
-### Device page
+### 设备页
 
-The page shows a `2 / 3`-style online summary, the local device card, and remote device cards. Each card exposes online/offline state, connection state, knowledge type, index state, and recent synchronization information using data already present in `AppSnapshot` and `PeerStatusSnapshot`.
+页面展示 `2 / 3` 样式的在线设备摘要、本机设备卡片和远程设备卡片。每张卡片使用 `AppSnapshot` 与 `PeerStatusSnapshot` 中已有的数据展示在线/离线状态、连接状态、知识类型、索引状态和最近同步信息。
 
-### History page
+### 历史页
 
-The page shows search and clear affordances, filter chips for all/success/insufficient evidence/no result/offline, and records grouped by date. Each record preserves selection behavior and displays question, time, result state, source, and confidence/evidence metadata where available.
+页面展示搜索和清理入口、全部/成功/证据不足/无结果/设备离线筛选标签，并按日期分组显示记录。每条记录保留现有选择行为，并在数据可用时展示问题、时间、结果状态、来源以及可信度/证据元数据。
 
-### Shared visual language
+### 统一视觉语言
 
-- White page background with light gray borders and restrained shadows.
-- Blue accent for active navigation, actions, and current progress.
-- Green for successful/online states, orange for insufficient evidence, and gray for offline/no-result states.
-- Small rounded cards with stable spacing and typography suitable for phone-width screens.
-- Fixed bottom navigation with icon-like symbols and text labels.
+- 白色页面背景，搭配浅灰边框和克制的阴影。
+- 使用蓝色强调当前导航、操作按钮和当前进度。
+- 使用绿色表示成功/在线，橙色表示证据不足，灰色表示离线/无结果。
+- 使用适合手机宽度的紧凑圆角卡片、稳定间距和字号层级。
+- 使用带图形符号和文字标签的固定底部导航。
 
-## Data Flow and Compatibility
+## 数据流与兼容性
 
-The existing subscription to `AppRuntime.current().store` remains unchanged. UI events continue to call the existing submit, cancel, retry, refresh, and record-selection callbacks. No changes are planned to query routing, transport, persistence, or collaboration models.
+现有对 `AppRuntime.current().store` 的订阅保持不变。界面事件继续调用现有的提交、取消、重试、刷新和记录选择回调。本次不修改查询路由、传输、持久化或协同模型。
 
-If a reference-only field such as a formatted time, confidence percentage, or device category is not present in the current model, the UI will use the closest existing field or a stable fallback label rather than changing the domain model in this pass.
+如果设计图中的格式化时间、可信度百分比或设备类别等字段当前模型不存在，界面使用最接近的现有字段或稳定的兜底文案，本次不为此修改领域模型。
 
-## Verification
+## 验证
 
-1. Run the existing ArkTS unit tests relevant to `Index`, automatic query UI, collaboration record state, and history behavior.
-2. Run the module build/lint check.
-3. Review the final diff to ensure unrelated user changes remain untouched and no business-layer files were modified unnecessarily.
+1. 执行与 `Index`、自动查询 UI、协同记录状态和历史行为相关的现有 ArkTS 单元测试。
+2. 执行模块构建和代码检查。
+3. 检查最终 diff，确保不影响用户已有的无关改动，也没有不必要地修改业务层文件。

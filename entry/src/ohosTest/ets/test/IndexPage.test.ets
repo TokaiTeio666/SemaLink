@@ -14,6 +14,7 @@ import {
 } from '../../../main/ets/collaboration/CollaborationModels';
 import { AppStateStore } from '../../../main/ets/state/AppStateStore';
 import { canSubmit, isBusy, semanticTaskStatus, shouldShowConnect } from '../../../main/ets/pages/Index';
+import { PeerStatusSnapshot } from '../../../main/ets/model/AppModels';
 
 export default function indexPageTest(): void {
   describe('IndexPage', () => {
@@ -69,6 +70,29 @@ export default function indexPageTest(): void {
       const evaluating = new AppStateStore();
       evaluating.update({ taskPhase: 'EVALUATING_L1', taskFeedback: 'NEED_MORE', taskRound: 1 });
       expect(semanticTaskStatus(evaluating.snapshot())).assertEqual('EVALUATING_L1 · NEED_MORE · R1');
+    });
+
+    it('keeps two peer status rows independent and privacy safe', 0, () => {
+      const peerB: PeerStatusSnapshot = {
+        deviceIdMasked: '***peer-b', deviceName: 'B', controlState: 'READY', dataState: 'READY',
+        taskState: 'COMPLETE', allocatedBytes: 128, evidenceCount: 2, failureCode: ''
+      };
+      const peerC: PeerStatusSnapshot = {
+        deviceIdMasked: '***peer-c', deviceName: 'C', controlState: 'FAILED', dataState: 'FAILED',
+        taskState: 'FAILED', allocatedBytes: 64, evidenceCount: 0, failureCode: 'E_DISCONNECTED'
+      };
+      const store = new AppStateStore();
+      store.update({ peerStatuses: [peerB, peerC], activePeerCount: 1 });
+      store.update({ peerStatuses: [peerB, {
+        deviceIdMasked: peerC.deviceIdMasked, deviceName: peerC.deviceName, controlState: peerC.controlState,
+        dataState: peerC.dataState, taskState: peerC.taskState, allocatedBytes: 64, evidenceCount: 1,
+        failureCode: peerC.failureCode
+      }] });
+      const snapshot = store.snapshot();
+      expect(snapshot.peerStatuses.length).assertEqual(2);
+      expect(snapshot.peerStatuses[0].deviceName).assertEqual('B');
+      expect(snapshot.peerStatuses[1].evidenceCount).assertEqual(1);
+      expect(snapshot.peerStatuses[0].deviceIdMasked.includes('peer-b')).assertTrue();
     });
   });
 

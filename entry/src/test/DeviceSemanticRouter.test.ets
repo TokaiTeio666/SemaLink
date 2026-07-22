@@ -349,18 +349,21 @@ export default function deviceSemanticRouterTest(): void {
       expect(snapshots[0].isLocal).assertTrue();
     });
 
-    it('directorySetRemoteOverwritesPreviousEntry', 0, () => {
+    it('directorySetRemoteKeepsIndependentEntries', 0, () => {
       const directory: DeviceDirectory = new DeviceDirectory((): number => NOW_MS);
       directory.setLocal(localSnapshot(), localProfile(['操作系统'], NOW_MS));
       directory.setRemote(remoteProfile('remote-a', '远端A', ['数据库'], NOW_MS));
       directory.setRemote(remoteProfile('remote-b', '远端B', ['网络'], NOW_MS));
 
       const candidates: DeviceRoutingCandidate[] = directory.candidates();
-      expect(candidates.length).assertEqual(2);
-      const remote: DeviceRoutingCandidate | null = findRemote(candidates);
-      expect(remote !== null).assertTrue();
-      expect(remote!.snapshot.deviceId).assertEqual('remote-b');
-      expect(remote!.profile.knowledgeDomains[0]).assertEqual('网络');
+      expect(candidates.length).assertEqual(3);
+      const remoteA: DeviceRoutingCandidate | null = candidates
+        .find((item: DeviceRoutingCandidate): boolean => item.snapshot.deviceId === 'remote-a') ?? null;
+      const remoteB: DeviceRoutingCandidate | null = findRemote(candidates);
+      expect(remoteA !== null).assertTrue();
+      expect(remoteB !== null).assertTrue();
+      expect(remoteA!.profile.knowledgeDomains[0]).assertEqual('数据库');
+      expect(remoteB!.snapshot.deviceId).assertEqual('remote-a');
     });
 
     it('directoryCandidatesBundlesSnapshotsAndProfiles', 0, () => {
@@ -378,6 +381,111 @@ export default function deviceSemanticRouterTest(): void {
       expect(remote!.profile.knowledgeDomains[0]).assertEqual('网络');
       expect(local!.snapshot.deviceId).assertEqual('local-device');
       expect(remote!.snapshot.deviceId).assertEqual('remote-a');
+    });
+
+    it('keepsRemoteEntriesIndependentAndRemovesOnlyTarget', 0, () => {
+      const clock: number[] = [NOW_MS];
+      const directory: DeviceDirectory = new DeviceDirectory((): number => clock[0]);
+      directory.upsertRemote(remoteProfile('remote-b', '远端B', ['网络'], NOW_MS));
+      directory.upsertRemote(remoteProfile('remote-c', '远端C', ['数据库'], NOW_MS));
+      expect(directory.candidates().length).assertEqual(2);
+      directory.removeRemote('remote-b');
+      const candidates: DeviceRoutingCandidate[] = directory.candidates();
+      expect(candidates.length).assertEqual(1);
+      expect(candidates[0].snapshot.deviceId).assertEqual('remote-c');
+    });
+
+    it('prunesOnlyExpiredRemoteAndReturnsStableIds', 0, () => {
+      const clock: number[] = [NOW_MS];
+      const directory: DeviceDirectory = new DeviceDirectory((): number => clock[0]);
+      directory.upsertRemote(remoteProfile('remote-c', '远端C', ['数据库'], NOW_MS));
+      directory.upsertRemote(remoteProfile('remote-b', '远端B', ['网络'], NOW_MS - TTL_MS - 1));
+      const removed: string[] = directory.pruneExpired();
+      expect(removed.length).assertEqual(1);
+      expect(removed[0]).assertEqual('remote-b');
+      expect(directory.candidates()[0].snapshot.deviceId).assertEqual('remote-c');
+    });
+
+    it('selectsLocalAndAtMostThreeReadyRemotesInStableOrder', 0, () => {
+      const task: TaskRequest = taskRequest(['操作系统']);
+      const candidates: DeviceRoutingCandidate[] = [
+        candidate(localSnapshot(), localProfile(['操作系统'], NOW_MS)),
+        candidate(remoteSnapshot('remote-d', '远端D', NOW_MS), remoteProfile('remote-d', '远端D', ['操作系统'], NOW_MS)),
+        candidate(remoteSnapshot('remote-b', '远端B', NOW_MS), remoteProfile('remote-b', '远端B', ['操作系统'], NOW_MS)),
+        candidate(remoteSnapshot('remote-c', '远端C', NOW_MS), remoteProfile('remote-c', '远端C', ['操作系统'], NOW_MS)),
+        candidate(remoteSnapshot('remote-e', '远端E', NOW_MS), remoteProfile('remote-e', '远端E', ['操作系统'], NOW_MS))
+      ];
+      const result: RoutingResult = router.route(task, candidates, NOW_MS);
+      const selected: RoutedDevice[] = router.selectParallel(result, 3);
+      expect(selected.length).assertEqual(4);
+      expect(selected[0].candidate.snapshot.isLocal).assertTrue();
+      expect(selected[1].candidate.snapshot.deviceId).assertEqual('remote-b');
+      expect(selected[2].candidate.snapshot.deviceId).assertEqual('remote-c');
+      expect(selected[3].candidate.snapshot.deviceId).assertEqual('remote-d');
+    });
+
+    it('defaultsToTwoRemoteDevicesForMvpParallelRouting', 0, () => {
+      const task: TaskRequest = taskRequest(['操作系统']);
+      const candidates: DeviceRoutingCandidate[] = [
+        candidate(localSnapshot(), localProfile(['操作系统'], NOW_MS)),
+        candidate(remoteSnapshot('remote-b', '远端B', NOW_MS), remoteProfile('remote-b', '远端B', ['操作系统'], NOW_MS)),
+        candidate(remoteSnapshot('remote-c', '远端C', NOW_MS), remoteProfile('remote-c', '远端C', ['操作系统'], NOW_MS)),
+        candidate(remoteSnapshot('remote-d', '远端D', NOW_MS), remoteProfile('remote-d', '远端D', ['操作系统'], NOW_MS))
+      ];
+
+      const selected: RoutedDevice[] = new DeviceSemanticRouter().selectParallel(
+        new DeviceSemanticRouter().route(task, candidates, NOW_MS));
+
+      expect(selected.length).assertEqual(3);
+      expect(selected[0].candidate.snapshot.isLocal).assertTrue();
+      expect(selected[1].candidate.snapshot.deviceId).assertEqual('remote-b');
+      expect(selected[2].candidate.snapshot.deviceId).assertEqual('remote-c');
+    });
+
+    it('doesNotExposeMutableDirectoryEntries', 0, () => {
+      const directory: DeviceDirectory = new DeviceDirectory((): number => NOW_MS);
+      const profile: DeviceProfileAdvertisement = remoteProfile('remote-b', '远端B', ['网络'], NOW_MS);
+      directory.upsertRemote(profile);
+      const returned: DeviceRoutingCandidate = directory.candidates()[0];
+      returned.snapshot.deviceAlias = '外部修改';
+      returned.profile.knowledgeDomains[0] = '外部修改';
+      const reread: DeviceRoutingCandidate = directory.candidates()[0];
+      expect(reread.snapshot.deviceAlias).assertEqual('远端B');
+      expect(reread.profile.knowledgeDomains[0]).assertEqual('网络');
+    });
+
+    it('usesProfileTtlForDirectoryAndRouting', 0, () => {
+      const customTtl: number = 1000;
+      const clock: number[] = [NOW_MS + customTtl - 1];
+      const directory: DeviceDirectory = new DeviceDirectory((): number => clock[0]);
+      const profile: DeviceProfileAdvertisement = remoteProfile('remote-ttl', '远端TTL', ['网络'], NOW_MS, customTtl);
+      directory.upsertRemote(profile);
+      expect(directory.candidates().length).assertEqual(1);
+      const task: TaskRequest = taskRequest(['网络']);
+      const routeResult: RoutingResult = router.route(task, directory.candidates(), clock[0]);
+      expect(routeResult.routed.length).assertEqual(1);
+      clock[0] = NOW_MS + customTtl + 1;
+      expect(directory.candidates().length).assertEqual(0);
+      const expiredResult: RoutingResult = router.route(task, [candidate(
+        remoteSnapshot('remote-ttl', '远端TTL', NOW_MS), profile)], clock[0]);
+      expect(expiredResult.excluded.length).assertEqual(1);
+      expect(expiredResult.excluded[0].reason).assertEqual('PROFILE_EXPIRED');
+    });
+
+    it('clonesInputsWhenRegisteringDirectoryEntries', 0, () => {
+      const directory: DeviceDirectory = new DeviceDirectory((): number => NOW_MS);
+      const snapshot: DeviceRuntimeSnapshot = remoteSnapshot('remote-input', '原始名称', NOW_MS);
+      const profile: DeviceProfileAdvertisement = remoteProfile('remote-input', '原始名称', ['网络'], NOW_MS);
+      directory.setLocal(snapshot, profile);
+      directory.upsertRemote(profile);
+      snapshot.deviceAlias = '修改后的名称';
+      profile.deviceAlias = '修改后的名称';
+      profile.knowledgeDomains[0] = '修改后的领域';
+      const entries: DeviceRuntimeSnapshot[] = directory.snapshot();
+      expect(entries[0].deviceAlias).assertEqual('原始名称');
+      const remote: DeviceRoutingCandidate = directory.candidates()[0];
+      expect(remote.profile.deviceAlias).assertEqual('原始名称');
+      expect(remote.profile.knowledgeDomains[0]).assertEqual('网络');
     });
   });
 }

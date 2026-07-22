@@ -1,6 +1,6 @@
 import { AppError } from '../common/AppError';
 import { AppRuntime } from '../runtime/AppRuntime';
-import { AppSnapshot, ConnectionState, DeviceRole, INITIAL_SNAPSHOT, cloneSnapshot } from '../model/AppModels';
+import { AppSnapshot, ConnectionState, DeviceRole, INITIAL_SNAPSHOT, cloneSnapshot, PeerStatusSnapshot } from '../model/AppModels';
 import { DisplayKnowledgeItem } from '../application/KnowledgeQueryDisplayState';
 import { KnowledgePayloadLevel } from '../contracts/knowledge/KnowledgeModels';
 import { CollaborationRecord, CollaborationRecordStatus } from '../collaboration/CollaborationModels';
@@ -79,6 +79,7 @@ struct Index {
       Column({ space: 16 }) {
         this.header()
         this.collaborationSection()
+        this.peerStatusSection()
         this.knowledgeSection()
         this.semanticTaskSection()
         this.roleSelector()
@@ -422,6 +423,12 @@ struct Index {
         }
         .id('connecting-indicator')
       }
+      if (this.snapshot.role === DeviceRole.INITIATOR) {
+        Button('运行 SoftBus 数据探针')
+          .id('tls-probe-button')
+          .width('100%')
+          .onClick(() => this.runCommand(() => AppRuntime.current().runTlsProbe()))
+      }
     }
     .width('100%')
   }
@@ -435,6 +442,48 @@ struct Index {
       .width('100%')
       .padding(20)
       .backgroundColor($r('app.color.surface'))
+  }
+
+  @Builder
+  peerStatusSection() {
+    if (this.snapshot.peerStatuses.length > 0) {
+      Column({ space: 8 }) {
+        Text('远端设备状态')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .width('100%')
+        ForEach(this.snapshot.peerStatuses, (peer: PeerStatusSnapshot) => {
+          Row({ space: 8 }) {
+            Column({ space: 3 }) {
+              Text(peer.deviceName + ' / ' + peer.deviceIdMasked)
+                .fontSize(14)
+                .fontColor($r('app.color.text_primary'))
+              Text('DSK：' + peer.controlState + '   数据：' + peer.dataState)
+                .fontSize(12)
+                .fontColor($r('app.color.text_secondary'))
+              Text('任务：' + (peer.taskState.length > 0 ? peer.taskState : 'PENDING') +
+                '   证据：' + peer.evidenceCount.toString())
+                .fontSize(12)
+                .fontColor($r('app.color.text_secondary'))
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+            if (peer.failureCode.length > 0) {
+              Text(peer.failureCode)
+                .fontSize(12)
+                .fontColor($r('app.color.status_error'))
+            }
+          }
+          .id('peer-status-' + peer.deviceIdMasked)
+          .width('100%')
+          .padding(12)
+          .backgroundColor($r('app.color.surface'))
+        }, (peer: PeerStatusSnapshot) => peer.deviceIdMasked)
+      }
+      .id('peer-status-section')
+      .width('100%')
+    }
   }
 
   @Builder
@@ -457,14 +506,28 @@ struct Index {
 
   @Builder
   resultSection() {
-    if (this.snapshot.summary.length > 0) {
+    if (this.snapshot.summary.length > 0 || this.snapshot.evidenceSourceDeviceIds.length > 0) {
       Column({ space: 8 }) {
         Text($r('app.string.result_label')).fontSize(14).fontColor($r('app.color.text_secondary'))
-        Text(this.snapshot.summary)
-          .id('result-summary')
-          .fontSize(17)
-          .fontColor($r('app.color.text_primary'))
-          .width('100%')
+        if (this.snapshot.summary.length > 0) {
+          Text(this.snapshot.summary)
+            .id('result-summary')
+            .fontSize(17)
+            .fontColor($r('app.color.text_primary'))
+            .width('100%')
+        }
+        Text('充分性：' + (this.snapshot.finalSufficiency.length > 0 ? this.snapshot.finalSufficiency : '-'))
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+        Text('证据来源：' + this.snapshot.evidenceSourceDeviceIds.length.toString() +
+          ' 个设备 · 去重后：' + this.snapshot.knowledgeItems.length.toString() +
+          ' · 冲突：' + this.snapshot.evidenceConflictCount.toString())
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+        Text('耗时：' + this.snapshot.totalTaskMs.toString() + ' ms · L2：' +
+          (this.snapshot.enteredL2 ? '是' : '否'))
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
       }
       .alignItems(HorizontalAlign.Start)
       .width('100%')

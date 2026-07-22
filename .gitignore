@@ -11,3 +11,4 @@
 **/.test
 /.appanalyzer
 data/
+entry/src/main/resources/rawfile/demo_tls/

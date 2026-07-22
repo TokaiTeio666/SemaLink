@@ -14,7 +14,7 @@ import { Transport, TransportListener } from '../main/ets/communication/Transpor
 import { AppSnapshot, ConnectionState, DeviceRole, maskDeviceId, PeerDevice } from '../main/ets/model/AppModels';
 import { ProtocolCodec } from '../main/ets/protocol/ProtocolCodec';
 import {
-  MAX_KNOWLEDGE_PAYLOAD_BYTES, ProtocolEnvelope, QueryPayload, ResultPayload
+  MAX_KNOWLEDGE_PAYLOAD_BYTES, MAX_REMOTE_KNOWLEDGE_PAYLOAD_BYTES, ProtocolEnvelope, QueryPayload, ResultPayload
 } from '../main/ets/protocol/ProtocolModels';
 import { AppStateStore } from '../main/ets/state/AppStateStore';
 import { FakeScheduler } from './support/FakeScheduler';
@@ -28,6 +28,14 @@ import { L2KnowledgePayload } from '../main/ets/contracts/knowledge/KnowledgePay
 
 const PEER: PeerDevice = { deviceId: 'd1', deviceName: 'MatePad', deviceType: 'tablet' };
 const WANT_PARAM: Record<string, Object> = {};
+
+function repeatedChinese(count: number): string {
+  let value: string = '';
+  for (let i = 0; i < count; i++) {
+    value += '知';
+  }
+  return value;
+}
 
 class FakeKnowledgeGateway implements LocalKnowledgeGateway {
   lastRequest: LocalKnowledgeQuery | undefined;
@@ -91,6 +99,33 @@ class FailingKnowledgeGateway implements LocalKnowledgeGateway {
       embeddingModelVersion: '', updatedAt: 1000
     };
     return Promise.resolve(profile);
+  }
+}
+
+class BudgetAwareKnowledgeGateway implements LocalKnowledgeGateway {
+  lastRequest: LocalKnowledgeQuery | undefined;
+
+  query(request: LocalKnowledgeQuery): Promise<LocalKnowledgeResult> {
+    this.lastRequest = request;
+    const snippet: string = request.maxPayloadBytes >= MAX_KNOWLEDGE_PAYLOAD_BYTES
+      ? repeatedChinese(1300)
+      : '短结果';
+    const payload: L2KnowledgePayload = {
+      schemaVersion: '1.0', level: 'L2', items: [{
+        evidenceId: 'ev-budget', documentId: 'doc-budget', chunkId: 'chunk-budget',
+        title: '预算测试', snippet: snippet, relevance: 0.9, truncated: snippet.length > 20
+      }]
+    };
+    const result: LocalKnowledgeResult = {
+      contractVersion: '1.0', requestId: request.requestId, level: 'L2', itemCount: 1,
+      payloadJson: JSON.stringify(payload), truncated: snippet.length > 20, retrievalMs: 2,
+      indexVersion: 'index-test', generatedAt: 1000
+    };
+    return Promise.resolve(result);
+  }
+
+  getKnowledgeProfile(): Promise<KnowledgeProfile> {
+    return new FakeKnowledgeGateway().getKnowledgeProfile();
   }
 }
 
@@ -338,7 +373,7 @@ export default function queryCoordinatorTest(): void {
       expect(ack.requestId).assertEqual('r1');
       expect((result.payload as ResultPayload).resultType).assertEqual('KNOWLEDGE');
       expect((result.payload as ResultPayload).knowledgeResult?.itemCount).assertEqual(1);
-      expect(knowledgeGateway.lastRequest?.maxPayloadBytes).assertEqual(MAX_KNOWLEDGE_PAYLOAD_BYTES);
+      expect(knowledgeGateway.lastRequest?.maxPayloadBytes).assertEqual(MAX_REMOTE_KNOWLEDGE_PAYLOAD_BYTES);
       expect(store.snapshot().question).assertEqual(
         (query.payload as QueryPayload).question
       );
@@ -776,6 +811,25 @@ export default function queryCoordinatorTest(): void {
       expect(records[0].status).assertEqual(CollaborationRecordStatus.FAILED);
       expect(records[0].question).assertEqual('失败查询');
       expect(records[0].errorMessage.length).assertLarger(0);
+    });
+
+    it('keeps a large remote knowledge result below the transport limit', 0, async () => {
+      const budgetGateway: BudgetAwareKnowledgeGateway = new BudgetAwareKnowledgeGateway();
+      const budgetCoordinator: QueryCoordinator = new QueryCoordinator(
+        session, store, budgetGateway, () => new TrustedDeviceResolver(provider), () => nowMs
+      );
+      expect(budgetCoordinator.acceptCollaboration(WANT_PARAM)).assertTrue();
+      transport.emitConnected();
+
+      const query: ProtocolEnvelope = codec.createQuery(
+        'm-budget', 's-budget', 'r-budget', 1000, { question: '大结果查询' }
+      );
+      await budgetCoordinator.onIncomingQuery(query);
+
+      expect(budgetGateway.lastRequest?.maxPayloadBytes).assertLess(MAX_KNOWLEDGE_PAYLOAD_BYTES);
+      expect(transport.sentMessages.length).assertEqual(2);
+      const result: ProtocolEnvelope = codec.decode(transport.sentMessages[1]);
+      expect(result.type).assertEqual('RESULT');
     });
 
     it('collaborationSubmitPreservesKnowledgeState', 0, async () => {

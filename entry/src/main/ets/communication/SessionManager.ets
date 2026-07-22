@@ -7,6 +7,8 @@ import { CancelPayload, ErrorPayload, EvidencePayload, MessageType, ProtocolEnve
   QueryPayload, ResultPayload, TaskAckPayload, TaskPayload, TsfPayload }
   from '../protocol/ProtocolModels';
 import { TaskSufficiencyFeedback } from '../contracts/semantic/SemanticModels';
+import { LocalKnowledgeResult } from '../contracts/knowledge/KnowledgeModels';
+import { L2KnowledgeItem, L2KnowledgePayload } from '../contracts/knowledge/KnowledgePayloadSchemas';
 import { Transport, TransportListener } from './Transport';
 
 export interface SessionObserver {
@@ -18,6 +20,10 @@ export interface SessionObserver {
 
 export interface ProtocolObserver {
   onProtocolEnvelope(envelope: ProtocolEnvelope): void;
+}
+
+export interface ProtocolSession {
+  sendEnvelope(envelope: ProtocolEnvelope): Promise<void>;
 }
 
 const NO_TIMER: number = -1;
@@ -83,7 +89,7 @@ function arrayRemove(arr: Array<string>, value: string): void {
   }
 }
 
-export class SessionManager implements TransportListener {
+export class SessionManager implements TransportListener, ProtocolSession {
   private transport: Transport;
   private codec: ProtocolCodec;
   private idGen: SequenceIdGenerator;
@@ -234,18 +240,127 @@ export class SessionManager implements TransportListener {
 
   async sendResult(request: ProtocolEnvelope, result: ResultPayload): Promise<void> {
     const messageId: string = this.idGen.next('msg');
-    const envelope: ProtocolEnvelope = this.codec.createResult(
+    let payloadToSend: ResultPayload = result;
+    let envelope: ProtocolEnvelope = this.codec.createResult(
       messageId, request.sessionId, request.requestId, Date.now(), result
     );
-    const text: string = this.codec.encode(envelope);
+    let text: string = '';
+    try {
+      text = this.codec.encode(envelope);
+    } catch (error) {
+      const appError: AppError = error as AppError;
+      if (appError.code !== 'E_PROTOCOL_INVALID' || result.resultType !== 'KNOWLEDGE') {
+        throw appError;
+      }
+      const compactedEnvelope: ProtocolEnvelope | null = this.compactKnowledgeEnvelope(
+        messageId, request.sessionId, request.requestId, result
+      );
+      if (compactedEnvelope !== null) {
+        envelope = compactedEnvelope;
+        payloadToSend = compactedEnvelope.payload as ResultPayload;
+        text = this.codec.encode(envelope);
+      } else {
+        payloadToSend = {
+          summary: result.summary,
+          sourceDeviceAlias: result.sourceDeviceAlias,
+          processingMs: result.processingMs,
+          resultType: 'SUMMARY'
+        };
+        envelope = this.codec.createResult(
+          messageId, request.sessionId, request.requestId, Date.now(), payloadToSend
+        );
+        text = this.codec.encode(envelope);
+      }
+    }
     const bytes: number = countUtf8Bytes(text);
     this.bytesSent += bytes;
-    this.lastCompleted = new CompletedResult(request.requestId, result);
+    this.lastCompleted = new CompletedResult(request.requestId, payloadToSend);
     this.notifyMetrics(0, 0);
     await this.transport.send(text);
     if (this.pendingRequestId === request.requestId) {
       this.clearPending();
     }
+  }
+
+  private compactKnowledgeEnvelope(messageId: string, sessionId: string, requestId: string,
+    result: ResultPayload): ProtocolEnvelope | null {
+    const knowledgeResult: LocalKnowledgeResult | undefined = result.knowledgeResult;
+    if (knowledgeResult === undefined || knowledgeResult.level !== 'L2') {
+      return null;
+    }
+    let rawPayload: Record<string, Object>;
+    try {
+      rawPayload = JSON.parse(knowledgeResult.payloadJson) as Record<string, Object>;
+    } catch (_error) {
+      return null;
+    }
+    const rawItems: Object | undefined = rawPayload['items'];
+    if (!Array.isArray(rawItems) || rawItems.length === 0) {
+      return null;
+    }
+    const rawItem: Object = rawItems[0];
+    if (rawItem === null || typeof rawItem !== 'object' || Array.isArray(rawItem)) {
+      return null;
+    }
+    const item: Record<string, Object> = rawItem as Record<string, Object>;
+    const evidenceId: Object | undefined = item['evidenceId'];
+    const documentId: Object | undefined = item['documentId'];
+    const chunkId: Object | undefined = item['chunkId'];
+    const title: Object | undefined = item['title'];
+    const snippet: Object | undefined = item['snippet'];
+    const relevance: Object | undefined = item['relevance'];
+    if (typeof evidenceId !== 'string' || typeof documentId !== 'string' ||
+      typeof chunkId !== 'string' || typeof title !== 'string' || typeof snippet !== 'string' ||
+      typeof relevance !== 'number') {
+      return null;
+    }
+
+    const snippetLengths: number[] = [160, 96, 64, 32, 20];
+    for (const length of snippetLengths) {
+      const compactItem: L2KnowledgeItem = {
+        evidenceId: evidenceId,
+        documentId: documentId,
+        chunkId: chunkId,
+        title: (title as string).substring(0, 80),
+        snippet: (snippet as string).substring(0, length),
+        relevance: relevance,
+        truncated: true
+      };
+      const compactPayload: L2KnowledgePayload = {
+        schemaVersion: '1.0', level: 'L2', items: [compactItem]
+      };
+      const compactKnowledgeResult: LocalKnowledgeResult = {
+        contractVersion: knowledgeResult.contractVersion,
+        requestId: requestId,
+        level: 'L2',
+        itemCount: 1,
+        payloadJson: JSON.stringify(compactPayload),
+        truncated: true,
+        retrievalMs: knowledgeResult.retrievalMs,
+        indexVersion: knowledgeResult.indexVersion,
+        generatedAt: knowledgeResult.generatedAt
+      };
+      const compactResult: ResultPayload = {
+        summary: result.summary,
+        sourceDeviceAlias: result.sourceDeviceAlias,
+        processingMs: result.processingMs,
+        resultType: 'KNOWLEDGE',
+        knowledgeResult: compactKnowledgeResult
+      };
+      const candidate: ProtocolEnvelope = this.codec.createResult(
+        messageId, sessionId, requestId, Date.now(), compactResult
+      );
+      try {
+        this.codec.encode(candidate);
+        return candidate;
+      } catch (error) {
+        const appError: AppError = error as AppError;
+        if (appError.code !== 'E_PROTOCOL_INVALID') {
+          throw appError;
+        }
+      }
+    }
+    return null;
   }
 
   async sendRemoteError(request: ProtocolEnvelope, error: AppError): Promise<void> {

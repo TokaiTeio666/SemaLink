@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@ohos/hypium';
 import { ProtocolCodec } from '../main/ets/protocol/ProtocolCodec';
-import { MessageType, ProtocolEnvelope, QueryPayload, ResultPayload, ErrorPayload, QueryAckPayload, ProfilePayload, TaskPayload, TaskAckPayload, EvidencePayload, TsfPayload, CancelPayload, MAX_QUESTION_CHARS, MAX_SUMMARY_CHARS, MAX_MESSAGE_BYTES } from '../main/ets/protocol/ProtocolModels';
+import { MessageType, ProtocolEnvelope, QueryPayload, ResultPayload, ErrorPayload, QueryAckPayload, ProfilePayload, TaskPayload, TaskAckPayload, EvidencePayload, TsfPayload, CancelPayload, EVIDENCE_PAGING_VERSION, MAX_EVIDENCE_PAGE_COUNT, MAX_QUESTION_CHARS, MAX_WIRE_SUMMARY_CHARS, MAX_MESSAGE_BYTES } from '../main/ets/protocol/ProtocolModels';
 import { AppError } from '../main/ets/common/AppError';
 import { L2KnowledgePayload } from '../main/ets/contracts/knowledge/KnowledgePayloadSchemas';
 import { LocalKnowledgeResult } from '../main/ets/contracts/knowledge/KnowledgeModels';
@@ -65,18 +65,18 @@ export default function protocolCodecTest(): void {
     });
 
     it('acceptsMaxLengthSummary', 0, () => {
-      const summary: string = 'x'.repeat(MAX_SUMMARY_CHARS);
+      const summary: string = 'x'.repeat(MAX_WIRE_SUMMARY_CHARS);
       const resultPayload: ResultPayload = {
         summary: summary, sourceDeviceAlias: '响应端设备', processingMs: 5
       };
       const envelope: ProtocolEnvelope = codec.createResult('m1', 's1', 'r1', 1000, resultPayload);
       const decoded: ProtocolEnvelope = codec.decode(codec.encode(envelope));
       const decodedPayload: ResultPayload = decoded.payload as ResultPayload;
-      expect(decodedPayload.summary.length).assertEqual(MAX_SUMMARY_CHARS);
+      expect(decodedPayload.summary.length).assertEqual(MAX_WIRE_SUMMARY_CHARS);
     });
 
     it('rejectsOversizedSummary', 0, () => {
-      const summary: string = 'x'.repeat(MAX_SUMMARY_CHARS + 1);
+      const summary: string = 'x'.repeat(MAX_WIRE_SUMMARY_CHARS + 1);
       let code: string = '';
       const oversizeResultPayload: ResultPayload = {
         summary: summary, sourceDeviceAlias: '响应端设备', processingMs: 5
@@ -93,6 +93,10 @@ export default function protocolCodecTest(): void {
       let code: string = '';
       try { codec.decode(bigText); } catch (error) { code = (error as AppError).code; }
       expect(code).assertEqual('E_PROTOCOL_INVALID');
+    });
+
+    it('uses the observed DSK single-message limit', 0, () => {
+      expect(MAX_MESSAGE_BYTES).assertEqual(1024);
     });
 
     it('roundTripsAck', 0, () => {
@@ -211,6 +215,19 @@ export default function protocolCodecTest(): void {
       expect(decodedPayload.round).assertEqual(1);
     });
 
+    it('roundTripsEvidencePagingCapability', 0, () => {
+      const task: TaskRequest = {
+        semanticContractVersion: '1.0', taskId: 'task-paging', queryText: 'paging',
+        requiredConcepts: ['paging'], requiredConfidence: 0.8, coverageThreshold: 0.8,
+        latencyBudgetMs: 1000, byteBudget: 4096, privacyLevel: 'PRIVATE_GROUP',
+        acceptableLevels: ['L1', 'L2']
+      };
+      const envelope: ProtocolEnvelope = codec.createTask('paging-task', 's1', 'task-paging', 1000,
+        { task: task, round: 1, evidencePagingVersion: EVIDENCE_PAGING_VERSION });
+      const payload: TaskPayload = codec.decode(codec.encode(envelope)).payload as TaskPayload;
+      expect(payload.evidencePagingVersion).assertEqual(EVIDENCE_PAGING_VERSION);
+    });
+
     it('roundTripsTaskAck', 0, () => {
       const payload: TaskAckPayload = {
         taskId: 'task-1', round: 1, acceptedAt: 1010, candidateCount: 1
@@ -253,6 +270,41 @@ export default function protocolCodecTest(): void {
       expect(decodedPayload.evidence.length).assertEqual(1);
       expect(decodedPayload.evidence[0].evidenceId).assertEqual('ev-1');
       expect(decodedPayload.evidence[0].level).assertEqual('L1');
+      expect(decodedPayload.pageIndex).assertEqual(0);
+      expect(decodedPayload.pageCount).assertEqual(1);
+    });
+
+    it('roundTripsEvidencePageMetadata', 0, () => {
+      const evidence: EvidenceUnit = {
+        semanticContractVersion: '1.0', evidenceId: 'ev-page', evidenceGroupId: 'grp-page',
+        sourceDeviceId: 'dev-1', sourceDocId: 'doc-page', level: 'L2', title: 'page',
+        relevance: 0.9, coveredConcepts: ['page'], estimatedCoverageGain: 0.5, byteCost: 256,
+        privacyLevel: 'PRIVATE_GROUP', privacyCost: 0.2, energyCost: 0.1, hash: 'page-hash',
+        canEscalateTo: []
+      };
+      const envelope: ProtocolEnvelope = codec.createEvidence('page-2', 's1', 'task-1', 1000,
+        { taskId: 'task-1', round: 2, pageIndex: 1, pageCount: 3, evidence: [evidence] });
+      const payload: EvidencePayload = codec.decode(codec.encode(envelope)).payload as EvidencePayload;
+      expect(payload.pageIndex).assertEqual(1);
+      expect(payload.pageCount).assertEqual(3);
+    });
+
+    it('normalizesLegacyEvidenceToOnePage', 0, () => {
+      const evidence: EvidenceUnit = {
+        semanticContractVersion: '1.0', evidenceId: 'ev-legacy', evidenceGroupId: 'grp-legacy',
+        sourceDeviceId: 'dev-1', sourceDocId: 'doc-legacy', level: 'L1', title: 'legacy',
+        relevance: 0.9, coveredConcepts: ['legacy'], estimatedCoverageGain: 0.5, byteCost: 128,
+        privacyLevel: 'PRIVATE_GROUP', privacyCost: 0.2, energyCost: 0.05, hash: 'legacy-hash',
+        canEscalateTo: ['L2']
+      };
+      const legacy: ProtocolEnvelope = {
+        version: '1.0', type: MessageType.EVIDENCE, messageId: 'legacy', sessionId: 's1',
+        requestId: 'task-1', sentAt: 1000,
+        payload: { taskId: 'task-1', round: 1, evidence: [evidence] } as EvidencePayload
+      };
+      const payload: EvidencePayload = codec.decode(codec.encode(legacy)).payload as EvidencePayload;
+      expect(payload.pageIndex).assertEqual(0);
+      expect(payload.pageCount).assertEqual(1);
     });
 
     it('roundTripsTsf', 0, () => {
@@ -363,6 +415,34 @@ export default function protocolCodecTest(): void {
       let code: string = '';
       try { codec.decode(rawJson); } catch (error) { code = (error as AppError).code; }
       expect(code).assertEqual('E_PROTOCOL_INVALID');
+    });
+
+    it('rejectsInvalidEvidencePageMetadata', 0, () => {
+      const evidence: EvidenceUnit = {
+        semanticContractVersion: '1.0', evidenceId: 'ev-page', evidenceGroupId: 'grp-page',
+        sourceDeviceId: 'dev-1', sourceDocId: 'doc-page', level: 'L1', title: 'page',
+        relevance: 0.9, coveredConcepts: ['page'], estimatedCoverageGain: 0.5, byteCost: 128,
+        privacyLevel: 'PRIVATE_GROUP', privacyCost: 0.2, energyCost: 0.05, hash: 'page-hash',
+        canEscalateTo: ['L2']
+      };
+      const invalidPayloads: EvidencePayload[] = [
+        { taskId: 'task-1', round: 1, pageIndex: 0, evidence: [evidence] },
+        { taskId: 'task-1', round: 1, pageIndex: 0, pageCount: 0, evidence: [evidence] },
+        { taskId: 'task-1', round: 1, pageIndex: 2, pageCount: 2, evidence: [evidence] },
+        { taskId: 'task-1', round: 1, pageIndex: 0,
+          pageCount: MAX_EVIDENCE_PAGE_COUNT + 1, evidence: [evidence] }
+      ];
+      let failures: number = 0;
+      for (const payload of invalidPayloads) {
+        try {
+          codec.createEvidence('invalid-page', 's1', 'task-1', 1000, payload);
+        } catch (error) {
+          if ((error as AppError).code === 'E_PROTOCOL_INVALID') {
+            failures++;
+          }
+        }
+      }
+      expect(failures).assertEqual(invalidPayloads.length);
     });
   });
 }

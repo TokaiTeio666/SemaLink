@@ -3,7 +3,8 @@ import {
   ProtocolEnvelope, ProtocolPayload, MessageType, QueryPayload, QueryAckPayload,
   ResultPayload, ErrorPayload, ProfilePayload, TaskPayload, TaskAckPayload,
   EvidencePayload, TsfPayload, CancelPayload,
-  PROTOCOL_VERSION, MAX_MESSAGE_BYTES, MAX_QUESTION_CHARS, MAX_SUMMARY_CHARS
+  PROTOCOL_VERSION, MAX_MESSAGE_BYTES, MAX_QUESTION_CHARS, MAX_SUMMARY_CHARS, MAX_WIRE_SUMMARY_CHARS,
+  EVIDENCE_PAGING_VERSION, MAX_EVIDENCE_PAGE_COUNT
 } from './ProtocolModels';
 import { LocalKnowledgeResult } from '../contracts/knowledge/KnowledgeModels';
 import {
@@ -118,6 +119,37 @@ function isRoundValid(round: Object | undefined): boolean {
 
 function isRoundValidNumber(round: number): boolean {
   return Number.isInteger(round) && (round === 1 || round === 2);
+}
+
+interface EvidencePageMetadata {
+  pageIndex: number;
+  pageCount: number;
+}
+
+function validateEvidencePagingVersion(version: number | undefined): number | undefined {
+  if (version === undefined) {
+    return undefined;
+  }
+  if (!Number.isInteger(version) || version < EVIDENCE_PAGING_VERSION) {
+    throw new AppError('E_PROTOCOL_INVALID', 'evidencePagingVersion field is invalid',
+      ErrorStage.PROTOCOL, false);
+  }
+  return version;
+}
+
+function validateEvidencePageMetadata(pageIndex: number | undefined,
+  pageCount: number | undefined): EvidencePageMetadata {
+  if (pageIndex === undefined && pageCount === undefined) {
+    return { pageIndex: 0, pageCount: 1 };
+  }
+  if (pageIndex === undefined || pageCount === undefined ||
+    !Number.isInteger(pageIndex) || !Number.isInteger(pageCount) ||
+    pageCount < 1 || pageCount > MAX_EVIDENCE_PAGE_COUNT ||
+    pageIndex < 0 || pageIndex >= pageCount) {
+    throw new AppError('E_PROTOCOL_INVALID', 'Evidence page metadata is invalid',
+      ErrorStage.PROTOCOL, false);
+  }
+  return { pageIndex: pageIndex, pageCount: pageCount };
 }
 
 function validateTypedEvidenceUnit(unit: EvidenceUnit): void {
@@ -539,14 +571,14 @@ export class ProtocolCodec {
   encode(envelope: ProtocolEnvelope): string {
     const text: string = JSON.stringify(envelope);
     if (countUtf8Bytes(text) > MAX_MESSAGE_BYTES) {
-      throw new AppError('E_PROTOCOL_INVALID', '消息超过 16 KiB 上限', ErrorStage.PROTOCOL, false);
+      throw new AppError('E_PROTOCOL_INVALID', 'Message exceeds the 1 KiB limit', ErrorStage.PROTOCOL, false);
     }
     return text;
   }
 
   decode(text: string): ProtocolEnvelope {
     if (countUtf8Bytes(text) > MAX_MESSAGE_BYTES) {
-      throw new AppError('E_PROTOCOL_INVALID', '消息超过 16 KiB 上限', ErrorStage.PROTOCOL, false);
+      throw new AppError('E_PROTOCOL_INVALID', 'Message exceeds the 1 KiB limit', ErrorStage.PROTOCOL, false);
     }
 
     let raw: Record<string, Object>;
@@ -632,7 +664,7 @@ export class ProtocolCodec {
           throw new AppError('E_PROTOCOL_INVALID', 'processingMs 字段无效', ErrorStage.PROTOCOL, false);
         }
         const summary: string = raw['summary'] as string;
-        if (summary.length === 0 || summary.length > MAX_SUMMARY_CHARS) {
+        if (summary.length === 0 || summary.length > MAX_SUMMARY_CHARS || summary.length > MAX_WIRE_SUMMARY_CHARS) {
           throw new AppError('E_PROTOCOL_INVALID', '摘要长度无效', ErrorStage.PROTOCOL, false);
         }
         const resultPayload: ResultPayload = {
@@ -681,7 +713,15 @@ export class ProtocolCodec {
         }
         const task: TaskRequest = validateTaskRequestFromRaw(taskRaw as Record<string, Object>);
         const round: number = requireRound(raw, 'round');
-        return { task: task, round: round } as TaskPayload;
+        const rawPagingVersion: Object | undefined = raw['evidencePagingVersion'];
+        const pagingVersion: number | undefined = rawPagingVersion === undefined
+          ? undefined
+          : validateEvidencePagingVersion(requireNumber(raw, 'evidencePagingVersion'));
+        const taskPayload: TaskPayload = { task: task, round: round };
+        if (pagingVersion !== undefined) {
+          taskPayload.evidencePagingVersion = pagingVersion;
+        }
+        return taskPayload;
       }
       case MessageType.TASK_ACK: {
         const taskId: string = requireNonEmptyString(raw, 'taskId');
@@ -701,10 +741,17 @@ export class ProtocolCodec {
       case MessageType.EVIDENCE: {
         const taskId: string = requireNonEmptyString(raw, 'taskId');
         const round: number = requireRound(raw, 'round');
+        const rawPageIndex: Object | undefined = raw['pageIndex'];
+        const rawPageCount: Object | undefined = raw['pageCount'];
+        const pageMetadata: EvidencePageMetadata = validateEvidencePageMetadata(
+          rawPageIndex === undefined ? undefined : requireNumber(raw, 'pageIndex'),
+          rawPageCount === undefined ? undefined : requireNumber(raw, 'pageCount'));
         const evidence: EvidenceUnit[] = validateEvidenceArray(raw['evidence']);
         return {
           taskId: taskId,
           round: round,
+          pageIndex: pageMetadata.pageIndex,
+          pageCount: pageMetadata.pageCount,
           evidence: evidence
         } as EvidencePayload;
       }
@@ -762,7 +809,8 @@ export class ProtocolCodec {
 
   createResult(messageId: string, sessionId: string, requestId: string,
     sentAt: number, payload: ResultPayload): ProtocolEnvelope {
-    if (payload.summary.length === 0 || payload.summary.length > MAX_SUMMARY_CHARS) {
+    if (payload.summary.length === 0 || payload.summary.length > MAX_SUMMARY_CHARS ||
+      payload.summary.length > MAX_WIRE_SUMMARY_CHARS) {
       throw new AppError('E_QUERY_INVALID', '摘要长度无效', ErrorStage.QUERY, true);
     }
     if (payload.resultType === 'KNOWLEDGE' &&
@@ -804,6 +852,7 @@ export class ProtocolCodec {
     } catch (e) {
       throw new AppError('E_PROTOCOL_INVALID', 'task 字段无效', ErrorStage.PROTOCOL, false);
     }
+    validateEvidencePagingVersion(payload.evidencePagingVersion);
     return {
       version: PROTOCOL_VERSION, type: MessageType.TASK, messageId: messageId, sessionId: sessionId,
       requestId: requestId, sentAt: sentAt, payload: payload
@@ -839,6 +888,8 @@ export class ProtocolCodec {
     if (!isRoundValidNumber(payload.round)) {
       throw new AppError('E_PROTOCOL_INVALID', 'round 字段无效', ErrorStage.PROTOCOL, false);
     }
+    const pageMetadata: EvidencePageMetadata = validateEvidencePageMetadata(
+      payload.pageIndex, payload.pageCount);
     if (!Array.isArray(payload.evidence) || payload.evidence.length === 0) {
       throw new AppError('E_PROTOCOL_INVALID', 'evidence 不能为空', ErrorStage.PROTOCOL, false);
     }
@@ -853,11 +904,17 @@ export class ProtocolCodec {
       }
       seenIds.add(unit.evidenceId);
     }
-    // P4 EVIDENCE performs a full UTF-8 message size check via encode() before transmission;
-    // callers should use codec.encode(envelope) to enforce MAX_MESSAGE_BYTES.
+    const normalizedPayload: EvidencePayload = {
+      taskId: payload.taskId,
+      round: payload.round,
+      pageIndex: pageMetadata.pageIndex,
+      pageCount: pageMetadata.pageCount,
+      evidence: payload.evidence
+    };
+    // The paginator probes the complete encoded envelope so every page stays within the DSK limit.
     return {
       version: PROTOCOL_VERSION, type: MessageType.EVIDENCE, messageId: messageId, sessionId: sessionId,
-      requestId: requestId, sentAt: sentAt, payload: payload
+      requestId: requestId, sentAt: sentAt, payload: normalizedPayload
     };
   }
 

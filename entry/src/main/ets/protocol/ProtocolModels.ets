@@ -7,11 +7,18 @@ import {
 } from '../contracts/semantic/SemanticModels';
 
 export const PROTOCOL_VERSION: string = '1.0';
-// abilityConnectionManager.sendMessage rejects payloads above its 4 KiB transport limit.
-export const MAX_MESSAGE_BYTES: number = 4 * 1024;
+// The deployed DSK runtime rejects sendMessage payloads above 1024 UTF-8 bytes.
+export const MAX_MESSAGE_BYTES: number = 1024;
 export const MAX_KNOWLEDGE_PAYLOAD_BYTES: number = 3 * 1024;
+// The knowledge API requires a payload budget of at least 1 KiB. SessionManager
+// falls back to a summary when the complete RESULT envelope cannot fit DSK.
+export const MAX_REMOTE_KNOWLEDGE_PAYLOAD_BYTES: number = 1024;
+export const EVIDENCE_PAGING_VERSION: number = 1;
+export const MAX_EVIDENCE_PAGE_COUNT: number = 64;
 export const MAX_QUESTION_CHARS: number = 1000;
 export const MAX_SUMMARY_CHARS: number = 2000;
+// Keep RESULT envelopes below the observed 1 KiB DSK message limit.
+export const MAX_WIRE_SUMMARY_CHARS: number = 600;
 
 export enum MessageType {
   QUERY = 'QUERY',
@@ -43,6 +50,7 @@ export interface ProfilePayload {
 export interface TaskPayload {
   task: TaskRequest;
   round: number;
+  evidencePagingVersion?: number;
 }
 export interface TaskAckPayload {
   taskId: string;
@@ -53,6 +61,8 @@ export interface TaskAckPayload {
 export interface EvidencePayload {
   taskId: string;
   round: number;
+  pageIndex?: number;
+  pageCount?: number;
   evidence: EvidenceUnit[];
 }
 export interface TsfPayload {

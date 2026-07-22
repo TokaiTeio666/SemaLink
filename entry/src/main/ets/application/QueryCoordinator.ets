@@ -3,7 +3,8 @@ import { SessionManager, SessionObserver } from '../communication/SessionManager
 import { TrustedDeviceResolver } from '../communication/TrustedDeviceResolver';
 import { AppSnapshot, ConnectionState, DeviceRole, PeerDevice, maskDeviceId } from '../model/AppModels';
 import {
-  MAX_KNOWLEDGE_PAYLOAD_BYTES, ProtocolEnvelope, QueryPayload, ResultPayload
+  MAX_KNOWLEDGE_PAYLOAD_BYTES, MAX_REMOTE_KNOWLEDGE_PAYLOAD_BYTES, ProtocolEnvelope,
+  QueryPayload, ResultPayload
 } from '../protocol/ProtocolModels';
 import { AppStateStore } from '../state/AppStateStore';
 import { KnowledgeError } from '../contracts/knowledge/KnowledgeError';
@@ -11,6 +12,7 @@ import { LocalKnowledgeGateway } from '../contracts/knowledge/LocalKnowledgeGate
 import { LocalKnowledgeQuery, LocalKnowledgeResult } from '../contracts/knowledge/KnowledgeModels';
 import { TaskRequest, TaskSufficiencyResult } from '../contracts/semantic/SemanticModels';
 import { ProgressiveQueryCoordinator } from '../communication/ProgressiveQueryCoordinator';
+import { MultiDeviceTaskCoordinator } from '../communication/MultiDeviceTaskCoordinator';
 import { KnowledgePayloadValidator } from '../contracts/knowledge/KnowledgePayloadValidator';
 import { publishKnowledgeResult, resultSummary } from './KnowledgeResultMapper';
 import {
@@ -31,6 +33,7 @@ export class QueryCoordinator implements SessionObserver {
   private readonly resolverFactory: ResolverFactory;
   private readonly now: Clock;
   private readonly semanticCoordinator?: ProgressiveQueryCoordinator;
+  private multiDeviceCoordinator?: MultiDeviceTaskCoordinator;
   private destroyed: boolean = false;
 
   constructor(
@@ -54,10 +57,17 @@ export class QueryCoordinator implements SessionObserver {
   }
 
   async submitSemanticTask(task: TaskRequest): Promise<TaskSufficiencyResult> {
+    if (this.multiDeviceCoordinator !== undefined) {
+      return await this.multiDeviceCoordinator.submit(task);
+    }
     if (this.semanticCoordinator === undefined) {
       throw new AppError('E_SEMANTIC_UNAVAILABLE', 'Semantic coordinator is unavailable', ErrorStage.QUERY, true);
     }
     return await this.semanticCoordinator.submit(task);
+  }
+
+  setMultiDeviceCoordinator(coordinator: MultiDeviceTaskCoordinator): void {
+    this.multiDeviceCoordinator = coordinator;
   }
 
   selectInitiator(): void {
@@ -314,7 +324,7 @@ export class QueryCoordinator implements SessionObserver {
         queryText: payload.question,
         topK: 5,
         requestedLevel: 'L2',
-        maxPayloadBytes: MAX_KNOWLEDGE_PAYLOAD_BYTES
+        maxPayloadBytes: MAX_REMOTE_KNOWLEDGE_PAYLOAD_BYTES
       };
       const knowledgeResult: LocalKnowledgeResult = await this.knowledgeGateway.query(request);
       const processingMs: number = Math.max(0, this.now() - startedAt);

@@ -45,5 +45,30 @@ export default function trustedDeviceResolverTest(): void {
       }
       expect(code).assertEqual('E_MULTIPLE_DEVICES');
     });
+    it('returnsEveryTrustedDeviceInStableOrder', 0, async () => {
+      const provider = new FakeProvider([
+        { deviceId: 'remote-c', deviceName: 'C', deviceType: 'phone' },
+        { deviceId: 'remote-b', deviceName: 'B', deviceType: 'tablet' }
+      ]);
+      const devices: Array<PeerDevice> = await new TrustedDeviceResolver(provider).resolveAll();
+      expect(devices.length).assertEqual(2);
+      expect(devices[0].deviceId).assertEqual('remote-b');
+      expect(devices[1].deviceId).assertEqual('remote-c');
+      expect(provider.released).assertTrue();
+    });
+    it('filtersEmptyAndDuplicateDeviceIds', 0, async () => {
+      const provider = new FakeProvider([
+        { deviceId: '', deviceName: 'Empty', deviceType: 'phone' },
+        { deviceId: 'remote-a', deviceName: 'A', deviceType: 'phone' },
+        { deviceId: 'remote-a', deviceName: 'A duplicate', deviceType: 'phone' },
+        { deviceId: 'remote-b', deviceName: 'B', deviceType: 'tablet' }
+      ]);
+
+      const devices: Array<PeerDevice> = await new TrustedDeviceResolver(provider).resolveAll();
+
+      expect(devices.length).assertEqual(2);
+      expect(devices[0].deviceId).assertEqual('remote-a');
+      expect(devices[1].deviceId).assertEqual('remote-b');
+    });
   });
 }

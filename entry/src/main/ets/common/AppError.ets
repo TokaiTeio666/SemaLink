@@ -10,7 +10,10 @@ export const P4_ERROR_CODES: string[] = [
   'INSUFFICIENT_EVIDENCE',
   'E_BACKGROUND_INTERRUPTED',
   'E_PROFILE_STALE',
-  'E_SEMANTIC_PROTOCOL_INVALID'
+  'E_SEMANTIC_PROTOCOL_INVALID',
+  'E_EVIDENCE_TOO_LARGE',
+  'E_EVIDENCE_PAGE_LIMIT',
+  'E_EVIDENCE_PAGE_TIMEOUT'
 ];
 
 export function calculatePercentile(samples: number[], percentile: number): number {

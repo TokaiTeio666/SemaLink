@@ -305,6 +305,31 @@ export default function sessionManagerTest(): void {
       expect(observer.bytesSentTotal).assertLarger(expectedBytes - 1);
     });
 
+    it('falls back to a summary when a knowledge result exceeds the DSK limit', 0, async () => {
+      await manager.connect(PEER);
+      transport.emitConnected();
+      const request: ProtocolEnvelope = codec.createQuery('m1', 's1', 'r1', 1000,
+        { question: '大结果' });
+      const oversizedResult: ResultPayload = {
+        summary: '命中 1 条', sourceDeviceAlias: '响应端设备', processingMs: 1,
+        resultType: 'KNOWLEDGE',
+        knowledgeResult: {
+          contractVersion: '1.0', requestId: 'r1', level: 'L2', itemCount: 1,
+          payloadJson: '{"schemaVersion":"1.0","level":"L2","items":[{"evidenceId":"ev-1","documentId":"doc-1","chunkId":"chunk-1","title":"测试","snippet":"' +
+            'x'.repeat(800) + '","relevance":0.9,"truncated":false}]}', truncated: true, retrievalMs: 1,
+          indexVersion: 'index-test', generatedAt: 1000
+        }
+      };
+
+      await manager.sendResult(request, oversizedResult);
+
+      expect(transport.sentMessages.length).assertEqual(1);
+      const sent: ResultPayload = codec.decode(transport.sentMessages[0]).payload as ResultPayload;
+      expect(sent.resultType).assertEqual('KNOWLEDGE');
+      expect(sent.summary).assertEqual('命中 1 条');
+      expect(sent.knowledgeResult?.itemCount).assertEqual(1);
+    });
+
     it('dispatchesP4EnvelopeOnlyOnceByMessageId', 0, async () => {
       await manager.connect(PEER);
       transport.emitConnected();

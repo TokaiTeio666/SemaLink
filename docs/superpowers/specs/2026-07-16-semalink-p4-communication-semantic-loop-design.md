@@ -266,7 +266,16 @@ CREATED
 
 ## 6. P4 语义协议
 
-协议载荷继续使用结构化 JSON。P4 不要求二进制帧、压缩或分片。
+协议载荷继续使用结构化 JSON。P4 不要求二进制帧、压缩或任意字节流分片。为满足 DSK
+单消息 4 KiB 边界，P4 支持 Evidence 语义分页：发起端通过可选
+`TASK.evidencePagingVersion=1` 声明能力，响应端在协商成功后发送带 0-based
+`pageIndex/pageCount` 的 `EVIDENCE` 页面。每页至少包含一个完整 `EvidenceUnit`，单个
+Evidence 不跨页，完整 envelope 编码后不得超过 4 KiB；单个 Evidence 仍超限时明确失败，
+不得静默丢弃。旧 TASK 不声明能力时继续发送单页 Evidence。
+
+接收端按 `taskId + round` 聚合页面，允许乱序和相同页面重试，校验各页 `pageCount`
+一致，并在收齐全部页面后按页序合并、跨页去重且只执行一次 TSF。缺页时不得提前评估；
+超过任务 `latencyBudgetMs` 仍未收齐时以 `E_EVIDENCE_PAGE_TIMEOUT` 失败并清理聚合状态。
 
 消息类型：
 
@@ -446,7 +455,7 @@ P4 硬性验收：
 - ArkData 真实向量数据库；
 - MindSpore Lite 推理；
 - L3 原始文件传输；
-- 二进制帧、压缩、心跳和选择性重传；
+- 二进制帧、压缩、任意字节流分片、心跳和选择性重传；
 - HUKS、Asset Store 和生产级鉴权；
 - 大模型答案生成；
 - 不可见的后台常驻服务。

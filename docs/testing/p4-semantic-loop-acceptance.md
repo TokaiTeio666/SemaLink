@@ -18,6 +18,9 @@ work. Legacy QUERY, QUERY_ACK, RESULT, and ERROR behavior remains part of the ma
 | Disconnect during task | Task ends with E_BACKGROUND_INTERRUPTED; no later dispatch |
 | Invalid semantic envelope | Envelope rejected with E_SEMANTIC_PROTOCOL_INVALID |
 | Duplicate message/evidence | First delivery only; no duplicate evaluation |
+| Multi-page evidence | Every encoded page is at most 1 KiB; TSF runs once after all pages arrive |
+| Out-of-order or missing page | Out-of-order pages are reassembled; a missing page does not trigger TSF and times out at the task latency budget |
+| Legacy single-page evidence | Missing page metadata is normalized to page 0 of 1 |
 
 ## Metrics to capture
 

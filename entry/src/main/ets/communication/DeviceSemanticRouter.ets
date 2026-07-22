@@ -85,6 +85,25 @@ export class DeviceSemanticRouter {
     };
   }
 
+  selectParallel(result: RoutingResult, maximumRemoteCount: number = 2): RoutedDevice[] {
+    const limit: number = Math.max(0, Math.floor(maximumRemoteCount));
+    const selected: RoutedDevice[] = [];
+    for (const routed of result.routed) {
+      if (routed.candidate.snapshot.isLocal) {
+        selected.push(routed);
+        break;
+      }
+    }
+    let remotes: number = 0;
+    for (const routed of result.routed) {
+      if (!routed.candidate.snapshot.isLocal && remotes < limit) {
+        selected.push(routed);
+        remotes++;
+      }
+    }
+    return selected;
+  }
+
   private exclusionReason(task: TaskRequest, candidate: DeviceRoutingCandidate,
     nowMs: number): RoutingExclusionReason | null {
     const snapshot: DeviceRuntimeSnapshot = candidate.snapshot;
@@ -92,7 +111,8 @@ export class DeviceSemanticRouter {
     if (task.privacyLevel === 'LOCAL_ONLY' && !snapshot.isLocal) {
       return 'LOCAL_ONLY_REMOTE';
     }
-    if (!snapshot.isLocal && nowMs - profile.advertisedAtMs > PROFILE_TTL_MS) {
+    const profileTtlMs: number = profile.ttlMs > 0 ? profile.ttlMs : PROFILE_TTL_MS;
+    if (!snapshot.isLocal && nowMs - profile.advertisedAtMs > profileTtlMs) {
       return 'PROFILE_EXPIRED';
     }
     if (snapshot.state !== 'READY' || profile.indexState !== 'READY') {
@@ -114,7 +134,8 @@ export class DeviceSemanticRouter {
     const semanticMatch: number = this.semanticMatch(task.requiredConcepts, profile.knowledgeDomains);
     const filterMatch: number = 1;
     const ageMs: number = Math.max(0, nowMs - profile.advertisedAtMs);
-    const freshness: number = Math.max(0, 1 - ageMs / PROFILE_TTL_MS);
+    const profileTtlMs: number = profile.ttlMs > 0 ? profile.ttlMs : PROFILE_TTL_MS;
+    const freshness: number = Math.max(0, 1 - ageMs / profileTtlMs);
     const normalizedRtt: number = Math.min(1, Math.max(0, snapshot.averageRttMs / 1000));
     const load: number = Math.min(1, Math.max(0, snapshot.load));
     const privacyRisk: number = snapshot.isLocal ? 0 : 0.2;

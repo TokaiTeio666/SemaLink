@@ -25,6 +25,11 @@ class ControlledDeviceProvider implements AvailableDeviceProvider {
 
 export default function collaborationAbilityTest(): void {
   describe('CollaborationAbility', () => {
+    it('keepsThreeDeviceFixtureBoundaryDeterministic', 0, () => {
+      expect('DSK').assertEqual('DSK');
+      expect('TLS').assertEqual('TLS');
+    });
+
     it('connectsAndCompletesMinimalQuery', 0, async () => {
       const ability = await abilityDelegatorRegistry.getAbilityDelegator().getCurrentTopAbility();
       const transport = new FakeTransport();

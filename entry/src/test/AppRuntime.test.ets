@@ -119,5 +119,20 @@ export default function appRuntimeTest(): void {
       expect(error?.code).assertEqual('E_INDEX_NOT_READY');
       runtime.destroy();
     });
+
+    it('exposes one shared multi-device runtime assembly', 0, () => {
+      const runtime = new AppRuntime(fakeContext() as never, { transport: new CountingTransport() });
+      expect(runtime.deviceDirectory as Object).assertEqual(runtime.semanticDeviceDirectory as Object);
+      expect(runtime.multiDeviceCoordinator as Object).assertEqual(runtime.semanticTaskCoordinator as Object);
+      expect(runtime.controlHub as Object).assertEqual(runtime.tls?.dsk as Object);
+      expect(runtime.connectionPool as Object).assertEqual(runtime.tls?.pool as Object);
+      runtime.destroy();
+    });
+
+    it('routes collaboration acceptance through the existing runtime', 0, () => {
+      const runtime = new AppRuntime(fakeContext() as never, { transport: new CountingTransport() });
+      expect(runtime.acceptCollaboration({})).assertTrue();
+      runtime.destroy();
+    });
   });
 }

@@ -33,7 +33,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onCollaborate(wantParam: Record<string, Object>): AbilityConstant.CollaborateResult {
-    return AppRuntime.current().coordinator.acceptCollaboration(wantParam)
+    return AppRuntime.current().acceptCollaboration(wantParam)
       ? AbilityConstant.CollaborateResult.ACCEPT
       : AbilityConstant.CollaborateResult.REJECT;
   }

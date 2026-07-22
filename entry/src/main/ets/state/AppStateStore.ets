@@ -23,6 +23,13 @@ export class AppStateStore {
 
   update(next: StateUpdate): void {
     const updated: AppSnapshot = {
+      peerStatuses: next.peerStatuses ?? this.current.peerStatuses,
+      activePeerCount: next.activePeerCount ?? this.current.activePeerCount,
+      evidenceSourceDeviceIds: next.evidenceSourceDeviceIds ?? this.current.evidenceSourceDeviceIds,
+      evidenceConflictCount: next.evidenceConflictCount ?? this.current.evidenceConflictCount,
+      finalSufficiency: next.finalSufficiency ?? this.current.finalSufficiency,
+      totalTaskMs: next.totalTaskMs ?? this.current.totalTaskMs,
+      enteredL2: next.enteredL2 ?? this.current.enteredL2,
       role: next.role ?? this.current.role,
       connectionState: next.connectionState ?? this.current.connectionState,
       question: next.question ?? this.current.question,

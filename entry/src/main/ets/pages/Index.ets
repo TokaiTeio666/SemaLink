@@ -126,7 +126,7 @@ struct Index {
       ForEach(this.snapshot.peerStatuses, (peer: PeerStatusSnapshot) => {
         Text(peer.deviceName + ' / ' + peer.dataState)
           .fontSize(12).fontColor($r('app.color.text_secondary'))
-      }, (peer) => peer.deviceName + peer.deviceIdMasked)
+      }, (peer: PeerStatusSnapshot) => peer.deviceName + peer.deviceIdMasked)
     }
     .width('100%').padding(16).backgroundColor($r('app.color.surface')).borderRadius(8)
   }

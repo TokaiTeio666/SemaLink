@@ -38,6 +38,13 @@ import { TaskSufficiencyResult } from '../contracts/semantic/SemanticModels';
 import { buildAutomaticTask } from '../application/AutomaticQueryPolicy';
 import { AutomaticQueryProgress } from '../application/AutomaticQueryPolicy';
 import { ErrorStage, AppError } from '../common/AppError';
+import {
+  CollaborationRecord,
+  CollaborationRecordStatus,
+  createSendingRecord,
+  sortCollaborationRecords,
+  updateCollaborationRecord
+} from '../collaboration/CollaborationModels';
 
 interface RuntimeDataMessage { type?: string; payload?: Object; }
 interface RuntimeEnvelopeWrapper { envelope?: Object; }
@@ -317,6 +324,7 @@ export class AppRuntime {
       finalSufficiency: '',
       clearError: true
     });
+    let automaticRecordCreated: boolean = false;
     try {
       const peers: Array<PeerDevice> = await this.resolverFactory().resolveAll();
       if (this.connectionPool !== undefined) {
@@ -340,6 +348,23 @@ export class AppRuntime {
         automaticQueryProgress: 'SEARCHING',
         taskPhase: 'AWAITING_L1'
       });
+      const sourceNames: string[] = ['local'].concat(connected.map((peer: PeerDevice): string =>
+        peer.deviceName.length > 0 ? peer.deviceName : peer.deviceId));
+      const automaticRecord: CollaborationRecord = createSendingRecord({
+        id: taskId,
+        question: queryText,
+        sourceDeviceName: 'local',
+        sourceDeviceNames: sourceNames,
+        targetDeviceName: 'automatic',
+        createdAt: Date.now()
+      });
+      const recordsWithAutomatic: Array<CollaborationRecord> = this.store.snapshot().collaborationRecords.slice();
+      recordsWithAutomatic.push(automaticRecord);
+      automaticRecordCreated = true;
+      this.store.update({
+        collaborationRecords: sortCollaborationRecords(recordsWithAutomatic),
+        selectedCollaborationRecordId: taskId
+      });
       const result: TaskSufficiencyResult = await this.multiDeviceCoordinator.submit(task);
       const progress: AutomaticQueryProgress = result.feedback === 'ENOUGH' ? 'ANSWER_READY' :
         (result.feedback === 'ABORT' ? 'INSUFFICIENT' : 'FAILED');
@@ -359,10 +384,27 @@ export class AppRuntime {
           'No sufficient evidence found',
         evidenceSourceDeviceIds: connected.map((peer: PeerDevice): string => peer.deviceId).concat(['local'])
       });
+      const completedRecords: Array<CollaborationRecord> = updateCollaborationRecord(taskId,
+        this.store.snapshot().collaborationRecords, {
+          status: result.feedback === 'ENOUGH' ? CollaborationRecordStatus.SYNCED : CollaborationRecordStatus.FAILED,
+          summary: result.feedback === 'ENOUGH' ?
+            'Answer ready from ' + result.acceptedEvidenceIds.length.toString() + ' evidence items' :
+            'No sufficient evidence found',
+          evidenceCount: result.acceptedEvidenceIds.length
+        });
+      this.store.update({ collaborationRecords: sortCollaborationRecords(completedRecords) });
     } catch (error) {
       const appError: AppError = error instanceof AppError ? error :
         new AppError('E_AUTOMATIC_QUERY_FAILED', 'Automatic query failed', ErrorStage.QUERY, true);
       this.store.update({ automaticQueryProgress: 'FAILED', taskPhase: 'FAILED', error: appError });
+      if (automaticRecordCreated) {
+        const failedRecords: Array<CollaborationRecord> = updateCollaborationRecord(taskId,
+          this.store.snapshot().collaborationRecords, {
+            status: CollaborationRecordStatus.FAILED,
+            errorMessage: appError.message
+          });
+        this.store.update({ collaborationRecords: sortCollaborationRecords(failedRecords) });
+      }
       throw error as Error;
     } finally {
       if (this.automaticTaskId === taskId) this.automaticTaskId = '';
@@ -374,6 +416,12 @@ export class AppRuntime {
     if (taskId.length === 0) return;
     await this.multiDeviceCoordinator.cancel(taskId);
     this.store.update({ automaticQueryProgress: 'INSUFFICIENT', taskPhase: 'ABORTED', taskFeedback: 'ABORT', finalSufficiency: 'ABORT' });
+    const cancelledRecords: Array<CollaborationRecord> = updateCollaborationRecord(taskId,
+      this.store.snapshot().collaborationRecords, {
+        status: CollaborationRecordStatus.OFFLINE,
+        errorMessage: 'Automatic query cancelled'
+      });
+    this.store.update({ collaborationRecords: sortCollaborationRecords(cancelledRecords) });
     this.automaticTaskId = '';
   }
 

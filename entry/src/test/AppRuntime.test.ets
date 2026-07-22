@@ -159,6 +159,9 @@ export default function appRuntimeTest(): void {
       expect(runtime.store.snapshot().automaticQueryProgress).assertEqual('ANSWER_READY');
       expect(runtime.store.snapshot().question).assertEqual('local question');
       expect(runtime.store.snapshot().automaticSourceNames.length).assertEqual(1);
+      expect(runtime.store.snapshot().collaborationRecords.length).assertEqual(1);
+      expect(runtime.store.snapshot().collaborationRecords[0].sourceDeviceNames[0]).assertEqual('local');
+      expect(runtime.store.snapshot().collaborationRecords[0].evidenceCount).assertEqual(1);
       runtime.destroy();
     });
   });

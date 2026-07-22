@@ -1,4 +1,5 @@
 import { KnowledgeError, KnowledgeErrorCode } from '../../contracts/knowledge/KnowledgeError';
+import { isSafeKnowledgeFilterValue } from '../../contracts/knowledge/KnowledgeFilterValueValidator';
 import { TaskRequestFilters } from '../../contracts/semantic/SemanticModels';
 import { KnowledgeRetrievalRequest, RETRIEVAL_CANDIDATE_LIMIT } from './RetrievalEngine';
 
@@ -13,11 +14,6 @@ function invalid(code: KnowledgeErrorCode, message: string): never {
   throw new KnowledgeError(code, message, false);
 }
 
-function resemblesStorageReference(value: string): boolean {
-  return /[a-z][a-z0-9+.-]*:\/\//i.test(value) || /[a-z]:[\\/]/i.test(value) ||
-    value.startsWith('/') || value.startsWith('\\\\');
-}
-
 function validateUniqueStrings(values: string[] | undefined, maximumCount: number,
   maximumCharacters: number): void {
   if (values === undefined) return;
@@ -29,12 +25,10 @@ function validateUniqueStrings(values: string[] | undefined, maximumCount: numbe
     if (typeof value !== 'string') {
       invalid('E_FILTER_INVALID', 'Knowledge retrieval filters are invalid');
     }
-    const normalized = value.trim();
-    if (normalized.length === 0 || value.length > maximumCharacters ||
-      resemblesStorageReference(normalized) || seen.has(normalized)) {
+    if (!isSafeKnowledgeFilterValue(value) || value.length > maximumCharacters || seen.has(value)) {
       invalid('E_FILTER_INVALID', 'Knowledge retrieval filters are invalid');
     }
-    seen.add(normalized);
+    seen.add(value);
   }
 }
 

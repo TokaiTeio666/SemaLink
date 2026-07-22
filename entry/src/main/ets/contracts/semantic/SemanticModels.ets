@@ -1,4 +1,5 @@
 import { KnowledgeError } from '../knowledge/KnowledgeError';
+import { isSafeKnowledgeFilterValue } from '../knowledge/KnowledgeFilterValueValidator';
 
 export const SEMANTIC_CONTRACT_VERSION: '1.0' = '1.0';
 
@@ -110,11 +111,6 @@ export function validateSemanticContractVersion(version: string): void {
   }
 }
 
-function resemblesStorageReference(value: string): boolean {
-  return /[a-z][a-z0-9+.-]*:\/\//i.test(value) || /[a-z]:\\/i.test(value) ||
-    value.startsWith('/') || value.startsWith('\\\\');
-}
-
 function validateFilterValues(values: string[] | undefined): void {
   if (values === undefined) {
     return;
@@ -123,7 +119,7 @@ function validateFilterValues(values: string[] | undefined): void {
     throw new KnowledgeError('E_FILTER_INVALID', 'Semantic task filter is invalid', false);
   }
   for (const value of values) {
-    if (typeof value !== 'string' || value.trim().length === 0 || resemblesStorageReference(value)) {
+    if (typeof value !== 'string' || !isSafeKnowledgeFilterValue(value)) {
       throw new KnowledgeError('E_FILTER_INVALID', 'Semantic task filter is invalid', false);
     }
   }
@@ -132,6 +128,9 @@ function validateFilterValues(values: string[] | undefined): void {
 export function validateTaskRequestFilters(filters: TaskRequestFilters | undefined): void {
   if (filters === undefined) {
     return;
+  }
+  if (typeof filters !== 'object' || filters === null || Array.isArray(filters)) {
+    throw new KnowledgeError('E_FILTER_INVALID', 'Semantic task filter is invalid', false);
   }
   validateFilterValues(filters.documentIds);
   validateFilterValues(filters.tags);

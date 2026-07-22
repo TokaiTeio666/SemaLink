@@ -1,0 +1,52 @@
+<h2>跨设备协作中心，哪种布局最适合 SemaLink？</h2>
+<p class="subtitle">请选择你希望用户打开这个页面后最先看到的内容</p>
+
+<div class="cards" data-multiselect>
+  <div class="card" data-choice="network-first" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f5f7fa;padding:14px;min-height:268px;color:#172033;font-family:system-ui,sans-serif">
+      <div style="background:#fff;border:1px solid #dfe5ed;border-radius:8px;min-height:240px;padding:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:14px">设备协作</b><span style="font-size:10px;color:#24835b">● 链路稳定</span></div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:18px;margin-top:28px">
+          <div style="text-align:center"><div style="width:58px;height:72px;border:2px solid #172033;border-radius:10px;margin:auto;padding-top:20px;font-size:10px">手机 A</div><div style="font-size:10px;margin-top:7px">当前设备</div></div>
+          <div style="width:78px;border-top:2px solid #6b9bd4;position:relative"><span style="position:absolute;left:30px;top:-19px;color:#3974b8;font-size:12px">↔</span></div>
+          <div style="text-align:center"><div style="width:82px;height:58px;border:2px solid #6b9bd4;border-radius:7px;margin:auto;padding-top:17px;font-size:10px">平板 B</div><div style="font-size:10px;margin-top:7px">协作设备</div></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:28px"><div style="flex:1;background:#edf5ff;padding:9px;border-radius:6px;font-size:10px">延迟<br><b style="font-size:15px">42ms</b></div><div style="flex:1;background:#eff8f2;padding:9px;border-radius:6px;font-size:10px">信任状态<br><b style="font-size:15px">已授权</b></div><div style="flex:1;background:#f5f1ea;padding:9px;border-radius:6px;font-size:10px">今日接力<br><b style="font-size:15px">8 次</b></div></div>
+      </div>
+    </div>
+    <div class="card-body"><h3>设备网络优先</h3><p>先看连接拓扑、在线状态和链路质量，再决定把什么内容发送到哪台设备。适合强调可信连接。</p></div>
+  </div>
+
+  <div class="card" data-choice="handoff-first" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f5f7fa;padding:14px;min-height:268px;color:#172033;font-family:system-ui,sans-serif">
+      <div style="background:#fff;border:1px solid #dfe5ed;border-radius:8px;min-height:240px;padding:14px">
+        <div style="font-size:11px;color:#738096">发送到另一台设备</div>
+        <div style="font-size:19px;font-weight:700;margin-top:10px">选择要接力的内容</div>
+        <div style="border:1px solid #d8e1ed;border-radius:7px;padding:11px;margin-top:15px;font-size:11px"><b>数据库事务设计</b><div style="color:#7b8799;margin-top:5px">知识查询结果 · 4 条证据</div></div>
+        <div style="display:flex;gap:8px;margin-top:12px"><div style="flex:1;border:2px solid #6b9bd4;border-radius:7px;padding:10px;font-size:10px"><b>平板 B</b><div style="color:#24835b;margin-top:6px">● 在线</div></div><div style="flex:1;border:1px solid #d8e1ed;border-radius:7px;padding:10px;font-size:10px"><b>笔记本 C</b><div style="color:#24835b;margin-top:6px">● 在线</div></div></div>
+        <div style="background:#172033;color:#fff;text-align:center;border-radius:5px;padding:9px;margin-top:12px;font-size:11px">发送并在目标设备打开</div>
+      </div>
+    </div>
+    <div class="card-body"><h3>任务接力优先</h3><p>直接围绕“把当前内容交给另一台设备”设计，路径短，适合高频传递查询结果或文档上下文。</p></div>
+  </div>
+
+  <div class="card" data-choice="activity-first" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#f5f7fa;padding:14px;min-height:268px;color:#172033;font-family:system-ui,sans-serif">
+      <div style="background:#fff;border:1px solid #dfe5ed;border-radius:8px;min-height:240px;padding:14px">
+        <div style="display:flex;justify-content:space-between"><b style="font-size:14px">协作记录</b><span style="font-size:10px;border:1px solid #d8e1ed;padding:4px 7px;border-radius:4px">筛选</span></div>
+        <div style="margin-top:18px;border-left:2px solid #9dbce1;padding-left:15px">
+          <div style="font-size:10px;color:#738096">刚刚 · 手机 A → 平板 B</div><div style="font-size:12px;font-weight:600;margin-top:5px">已发送“数据库事务设计”查询</div>
+          <div style="font-size:10px;color:#24835b;margin-top:5px">已在平板 B 打开</div>
+        </div>
+        <div style="margin-top:20px;border-left:2px solid #dbe3ed;padding-left:15px"><div style="font-size:10px;color:#738096">今天 14:32 · 平板 B → 手机 A</div><div style="font-size:12px;font-weight:600;margin-top:5px">接收 3 条语义证据</div><div style="font-size:10px;color:#738096;margin-top:5px">查询上下文已同步</div></div>
+        <div style="margin-top:18px;background:#f1f5fa;border-radius:6px;padding:9px;font-size:10px;color:#66758a">所有设备均已完成身份校验</div>
+      </div>
+    </div>
+    <div class="card-body"><h3>协作记录优先</h3><p>把接力、查询上下文和设备事件串成时间线，适合需要追踪过程和结果的用户。</p></div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:22px">
+  <p class="label">选择方式</p>
+  <p>可以点选一个主方向，也可以点选两个让我融合。下一轮我会围绕你的选择定义首屏操作、设备状态和异常状态。</p>
+</div>

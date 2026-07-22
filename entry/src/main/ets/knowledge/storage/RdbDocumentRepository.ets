@@ -335,18 +335,29 @@ export class RdbDocumentRepository implements DocumentRepository, KnowledgeCandi
   }
 
   async setMetadata(metadata: KnowledgeMetadata): Promise<void> {
+    let store: relationalStore.RdbStore | undefined = undefined;
+    let transactionStarted = false;
     try {
-      const store = this.database.getStore();
-      await store.executeSql('INSERT OR REPLACE INTO knowledge_metadata(metadata_key,metadata_value) VALUES (?,?)',
-        ['index_state', metadata.indexState]);
-      await store.executeSql('INSERT OR REPLACE INTO knowledge_metadata(metadata_key,metadata_value) VALUES (?,?)',
-        ['index_version', metadata.indexVersion]);
-      await store.executeSql('INSERT OR REPLACE INTO knowledge_metadata(metadata_key,metadata_value) VALUES (?,?)',
-        ['profile_version', metadata.profileVersion]);
-      await store.executeSql('INSERT OR REPLACE INTO knowledge_metadata(metadata_key,metadata_value) VALUES (?,?)',
-        ['last_imported_at', metadata.updatedAt.toString()]);
+      store = this.database.getStore();
+      store.beginTransaction();
+      transactionStarted = true;
+      await this.writeMetadata(store, metadata);
+      store.commit();
+      transactionStarted = false;
     } catch (error) {
+      if (transactionStarted && store !== undefined) rollbackAfterFailure(store);
       throw storageOperationError();
     }
+  }
+
+  private async writeMetadata(store: relationalStore.RdbStore, metadata: KnowledgeMetadata): Promise<void> {
+    await store.executeSql('INSERT OR REPLACE INTO knowledge_metadata(metadata_key,metadata_value) VALUES (?,?)',
+      ['index_state', metadata.indexState]);
+    await store.executeSql('INSERT OR REPLACE INTO knowledge_metadata(metadata_key,metadata_value) VALUES (?,?)',
+      ['index_version', metadata.indexVersion]);
+    await store.executeSql('INSERT OR REPLACE INTO knowledge_metadata(metadata_key,metadata_value) VALUES (?,?)',
+      ['profile_version', metadata.profileVersion]);
+    await store.executeSql('INSERT OR REPLACE INTO knowledge_metadata(metadata_key,metadata_value) VALUES (?,?)',
+      ['last_imported_at', metadata.updatedAt.toString()]);
   }
 }

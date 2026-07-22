@@ -127,6 +127,10 @@
     {
       "name": "collaboration_status_timeout",
       "value": "超时"
+    },
+    {
+      "name": "SemaLinkAgentExtensionAbility_desc",
+      "value": "SemaLink 跨设备本地知识检索智能体"
     }
   ]
 }

@@ -135,7 +135,7 @@ export class CollaborationTransport implements Transport {
       abilityName: ABILITY_NAME
     };
     const connectOptions: abilityConnectionManager.ConnectOptions = {
-      needSendData: false,
+      needSendData: true,
       startOptions: abilityConnectionManager.StartOptionParams.START_IN_FOREGROUND,
       parameters: { 'semalink.role': 'RESPONDER' }
     };

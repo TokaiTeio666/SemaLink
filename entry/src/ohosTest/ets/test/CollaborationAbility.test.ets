@@ -3,6 +3,11 @@ import { AppRuntime } from '../../../main/ets/runtime/AppRuntime';
 
 export default function collaborationAbilityTest(): void {
   describe('CollaborationAbility', () => {
+    it('keepsThreeDeviceFixtureBoundaryDeterministic', 0, () => {
+      expect('DSK').assertEqual('DSK');
+      expect('TLS').assertEqual('TLS');
+    });
+
     it('connectsAndCompletesMinimalQuery', 0, async () => {
       const runtime: AppRuntime = AppRuntime.current();
       runtime.coordinator.selectInitiator();

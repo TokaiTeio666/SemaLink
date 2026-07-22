@@ -16,18 +16,29 @@ function unit(id: string, concept: string, source: string, level: 'L1' | 'L2' = 
 }
 class FakeTransport implements CoordinatorTransport {
   sent: string[] = [];
+  envelopes: Array<Record<string, Object>> = [];
   private readonly responses: Map<string, EvidenceUnit[]>;
-  constructor(responses: Map<string, EvidenceUnit[]>) { this.responses = responses; }
+  private readonly failingSearches: Set<string>;
+  constructor(responses: Map<string, EvidenceUnit[]>, failingSearches: Set<string> = new Set<string>()) {
+    this.responses = responses;
+    this.failingSearches = failingSearches;
+  }
   send(deviceId: string, envelope: Object): Promise<void> {
     this.sent.push(deviceId + ':' + (envelope as SentEnvelope).type);
+    this.envelopes.push(envelope as Record<string, Object>);
     return Promise.resolve();
   }
   search(deviceId: string, _request: TaskRequest, round: 1 | 2): Promise<EvidenceUnit[]> {
+    if (this.failingSearches.has(deviceId + ':' + round)) return Promise.reject(new Error('search failed'));
     return Promise.resolve(this.responses.get(deviceId + ':' + round) ?? []);
   }
 }
 function candidate(deviceId: string, local: boolean): CoordinatorCandidate {
   return { deviceId: deviceId, isLocal: local, routeScore: local ? 1 : 0.8, ready: true };
+}
+
+function scoredCandidate(deviceId: string, local: boolean, routeScore: number): CoordinatorCandidate {
+  return { deviceId: deviceId, isLocal: local, routeScore: routeScore, ready: true };
 }
 
 interface CaughtError {
@@ -60,6 +71,33 @@ export default function multiDeviceTaskCoordinatorTest(): void {
       expect(busy).assertEqual(true);
       await coordinator.cancel('task-1');
       await pending;
+    });
+
+    it('sends a versioned task envelope to every remote participant', 0, async () => {
+      const transport = new FakeTransport(new Map<string, EvidenceUnit[]>([
+        ['local:1', [unit('a', 'alpha', 'local')]], ['remote-b:1', [unit('b', 'beta', 'remote-b')]]
+      ]));
+      const coordinator = new MultiDeviceTaskCoordinator(transport, () => [candidate('local', true), candidate('remote-b', false)]);
+      await coordinator.submit(task('task-envelope'));
+      expect(transport.envelopes[0]['version']).assertEqual('2.0');
+      expect(transport.envelopes[0]['type']).assertEqual('TASK');
+    });
+
+    it('selectsHighestScoringReadyRemotesAndKeepsLocalEvidenceWhenRemoteFails', 0, async () => {
+      const transport = new FakeTransport(
+        new Map<string, EvidenceUnit[]>([['local:1', [unit('local-alpha', 'alpha', 'local'), unit('local-beta', 'beta', 'local')]],
+          ['remote-high:1', [unit('remote-beta', 'beta', 'remote-high')]]]),
+        new Set<string>(['remote-high:1'])
+      );
+      const coordinator = new MultiDeviceTaskCoordinator(transport, () => [
+        scoredCandidate('local', true, 0.30), scoredCandidate('remote-low', false, 0.20),
+        scoredCandidate('remote-high', false, 0.90), scoredCandidate('remote-mid', false, 0.60)
+      ]);
+      const result = await coordinator.submit(task('task-route-score'));
+      expect(result.feedback).assertEqual('ENOUGH');
+      expect(transport.sent.indexOf('remote-high:TASK') >= 0).assertTrue();
+      expect(transport.sent.indexOf('remote-mid:TASK') >= 0).assertTrue();
+      expect(transport.sent.indexOf('remote-low:TASK')).assertEqual(-1);
     });
   });
 }

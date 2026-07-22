@@ -6,6 +6,7 @@ import { KnowledgeError } from '../main/ets/contracts/knowledge/KnowledgeError';
 import { KnowledgeProfile } from '../main/ets/contracts/knowledge/KnowledgeModels';
 import { SemanticKnowledgeProvider } from '../main/ets/contracts/semantic/SemanticKnowledgeProvider';
 import { EvidenceUnit, TaskRequest } from '../main/ets/contracts/semantic/SemanticModels';
+import { AvailableDeviceProvider, TrustedDeviceResolver } from '../main/ets/communication/TrustedDeviceResolver';
 
 class CountingTransport implements Transport {
   listener: TransportListener | null = null;
@@ -38,6 +39,7 @@ function fakeContext(): FakeContext {
 
 class FakeSemanticProvider implements SemanticKnowledgeProvider {
   calls: number = 0;
+  evidence: EvidenceUnit[] = [];
 
   async getProfile(): Promise<KnowledgeProfile> {
     this.calls += 1;
@@ -50,8 +52,13 @@ class FakeSemanticProvider implements SemanticKnowledgeProvider {
 
   async searchEvidence(task: TaskRequest): Promise<EvidenceUnit[]> {
     this.calls += 1;
-    return [];
+    return this.evidence;
   }
+}
+
+class EmptyDeviceProvider implements AvailableDeviceProvider {
+  async list(): Promise<Array<PeerDevice>> { return []; }
+  release(): void {}
 }
 
 async function capturedKnowledgeError(action: () => Promise<void>): Promise<KnowledgeError | undefined> {
@@ -132,6 +139,26 @@ export default function appRuntimeTest(): void {
     it('routes collaboration acceptance through the existing runtime', 0, () => {
       const runtime = new AppRuntime(fakeContext() as never, { transport: new CountingTransport() });
       expect(runtime.acceptCollaboration({})).assertTrue();
+      runtime.destroy();
+    });
+
+    it('submitsAnAutomaticQueryWithLocalEvidenceWithoutAConnectedPeer', 0, async () => {
+      const evidence: EvidenceUnit = {
+        semanticContractVersion: '1.0', evidenceId: 'local-evidence', evidenceGroupId: 'local-group',
+        sourceDeviceId: 'local', sourceDocId: 'doc-1', level: 'L1', title: 'Local answer',
+        relevance: 1, coveredConcepts: [], estimatedCoverageGain: 1, byteCost: 100,
+        privacyLevel: 'PRIVATE_GROUP', privacyCost: 0, energyCost: 0, hash: 'local-hash', canEscalateTo: ['L2']
+      };
+      const provider = new FakeSemanticProvider();
+      provider.evidence = [evidence];
+      const runtime = new AppRuntime(fakeContext() as never, {
+        transport: new CountingTransport(), knowledgeProvider: provider,
+        resolverFactory: (): TrustedDeviceResolver => new TrustedDeviceResolver(new EmptyDeviceProvider())
+      });
+      await runtime.submitAutomaticQuery('  local question  ');
+      expect(runtime.store.snapshot().automaticQueryProgress).assertEqual('ANSWER_READY');
+      expect(runtime.store.snapshot().question).assertEqual('local question');
+      expect(runtime.store.snapshot().automaticSourceNames.length).assertEqual(1);
       runtime.destroy();
     });
   });

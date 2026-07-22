@@ -14,7 +14,7 @@ import { LocalKnowledgeGateway } from '../contracts/knowledge/LocalKnowledgeGate
 import { KnowledgeApplicationService } from '../application/KnowledgeApplicationService';
 import { publishKnowledgeResult } from '../application/KnowledgeResultMapper';
 import { KnowledgeError } from '../contracts/knowledge/KnowledgeError';
-import { ConnectionState } from '../model/AppModels';
+import { ConnectionState, PeerDevice } from '../model/AppModels';
 import { DeviceDirectory } from '../communication/DeviceDirectory';
 import { DeviceSemanticRouter } from '../communication/DeviceSemanticRouter';
 import { MultiDeviceTaskCoordinator, CoordinatorTransport, CoordinatorCandidate } from '../communication/MultiDeviceTaskCoordinator';
@@ -34,10 +34,20 @@ import {
   LocalKnowledgeResult
 } from '../contracts/knowledge/KnowledgeModels';
 import { EvidenceUnit, TaskRequest } from '../contracts/semantic/SemanticModels';
+import { TaskSufficiencyResult } from '../contracts/semantic/SemanticModels';
+import { buildAutomaticTask } from '../application/AutomaticQueryPolicy';
+import { AutomaticQueryProgress } from '../application/AutomaticQueryPolicy';
+import { ErrorStage, AppError } from '../common/AppError';
+
+interface RuntimeDataMessage { type?: string; payload?: Object; }
+interface RuntimeEnvelopeWrapper { envelope?: Object; }
+interface RuntimeEvidencePayload { taskId: string; round: number; evidence?: EvidenceUnit[]; }
 
 class RuntimeCoordinatorTransport implements CoordinatorTransport {
   private readonly pool: PeerConnectionPool | undefined;
   private readonly provider: SemanticKnowledgeProvider;
+  private readonly completed = new Map<string, EvidenceUnit[]>();
+  private readonly waiters = new Map<string, (evidence: EvidenceUnit[]) => void>();
 
   constructor(pool: PeerConnectionPool | undefined, provider: SemanticKnowledgeProvider) {
     this.pool = pool;
@@ -54,7 +64,41 @@ class RuntimeCoordinatorTransport implements CoordinatorTransport {
     if (deviceId === 'local') {
       return await this.provider.searchEvidence(task);
     }
-    return [];
+    const key = task.taskId + '@' + deviceId + '@' + _round.toString();
+    const cached = this.completed.get(key);
+    if (cached !== undefined) { this.completed.delete(key); return cached; }
+    return await new Promise<EvidenceUnit[]>((resolve) => {
+      this.waiters.set(key, resolve);
+      setTimeout((): void => {
+        const pending = this.waiters.get(key);
+        if (pending !== undefined) { this.waiters.delete(key); pending([]); }
+      }, task.latencyBudgetMs);
+    });
+  }
+
+  onEnvelope(deviceId: string, envelope: Object): void {
+    const value = envelope as RuntimeDataMessage;
+    if (value.type !== 'EVIDENCE_BATCH' && value.type !== 'EVIDENCE_PAGE' && value.type !== 'EVIDENCE_COMPLETE') return;
+    const payload = value.payload as RuntimeEvidencePayload;
+    const key = payload.taskId + '@' + deviceId + '@' + payload.round.toString();
+    if (value.type === 'EVIDENCE_BATCH' || value.type === 'EVIDENCE_PAGE') {
+      const current = this.completed.get(key) ?? [];
+      this.completed.set(key, current.concat(payload.evidence ?? []));
+      return;
+    }
+    const evidence = this.completed.get(key) ?? [];
+    const waiter = this.waiters.get(key);
+    if (waiter !== undefined) {
+      this.waiters.delete(key);
+      this.completed.delete(key);
+      waiter(evidence);
+    }
+  }
+
+  destroy(): void {
+    for (const waiter of this.waiters.values()) waiter([]);
+    this.waiters.clear();
+    this.completed.clear();
   }
 }
 
@@ -86,6 +130,10 @@ export class AppRuntime {
   readonly connectionPool: PeerConnectionPool | undefined;
   private readonly ownedKnowledgeService: KnowledgeApplicationService;
   private readonly context: common.UIAbilityContext;
+  private readonly runtimeTransport: RuntimeCoordinatorTransport;
+  private readonly resolverFactory: ResolverFactory;
+  private readonly automaticIdGenerator: SequenceIdGenerator;
+  private automaticTaskId: string = '';
   private knowledgeInitialization?: Promise<void>;
 
   constructor(context: common.UIAbilityContext, dependencies: RuntimeDependencies = {}) {
@@ -102,6 +150,8 @@ export class AppRuntime {
     this.ownedKnowledgeService = this.knowledge;
     const resolverFactory: ResolverFactory = dependencies.resolverFactory ??
       (() => new TrustedDeviceResolver(new DistributedDeviceProvider(bundleName)));
+    this.resolverFactory = resolverFactory;
+    this.automaticIdGenerator = new SequenceIdGenerator();
     if (dependencies.knowledgeProvider !== undefined) {
       this.knowledgeProvider = dependencies.knowledgeProvider;
       this.knowledgeGateway = undefined;
@@ -123,7 +173,8 @@ export class AppRuntime {
     this.controlHub = this.tls?.dsk;
     this.connectionPool = this.tls?.pool;
     this.evidenceAggregator = new EvidenceAggregator();
-    const taskTransport: CoordinatorTransport = new RuntimeCoordinatorTransport(this.connectionPool, this.knowledgeProvider);
+    this.runtimeTransport = new RuntimeCoordinatorTransport(this.connectionPool, this.knowledgeProvider);
+    const taskTransport: CoordinatorTransport = this.runtimeTransport;
     this.multiDeviceCoordinator = new MultiDeviceTaskCoordinator(taskTransport, (): CoordinatorCandidate[] => {
       const candidates: CoordinatorCandidate[] = [{ deviceId: 'local', isLocal: true, routeScore: 1, ready: true }];
       const readyIds: string[] = this.connectionPool?.readyDeviceIds() ?? [];
@@ -141,6 +192,16 @@ export class AppRuntime {
         }
       }
     });
+    const ingress = (deviceId: string, text: string): void => {
+      let message: Object;
+      try { message = JSON.parse(text) as Object; } catch (_) { return; }
+      const wrapper = message as RuntimeEnvelopeWrapper;
+      const envelope: Object = wrapper.envelope ?? message;
+      this.runtimeTransport.onEnvelope(deviceId, envelope);
+      this.multiDeviceCoordinator.onEnvelope(deviceId, envelope as import('../protocol/MultiDeviceProtocolModels').DataEnvelope);
+      this.peerTaskResponder.onEnvelope(deviceId, envelope as import('../protocol/MultiDeviceProtocolModels').DataEnvelope).catch((): void => {});
+    };
+    this.tls?.onDataMessage(ingress);
   }
 
   initializeKnowledge(): Promise<void>;
@@ -225,6 +286,97 @@ export class AppRuntime {
     }
   }
 
+  async submitAutomaticQuery(question: string): Promise<void> {
+    const queryText: string = question.trim();
+    if (queryText.length === 0 || queryText.length > 1000) {
+      const invalid = new KnowledgeError('E_QUERY_INVALID', 'Automatic query question is invalid', false);
+      this.store.update({ automaticQueryProgress: 'FAILED' });
+      throw invalid;
+    }
+    if (this.automaticTaskId.length > 0) {
+      throw new AppError('E_BUSY', 'Another automatic query is active', ErrorStage.LIFECYCLE, true);
+    }
+    const taskId: string = this.automaticIdGenerator.next('automatic-query');
+    this.automaticTaskId = taskId;
+    const task: TaskRequest = buildAutomaticTask(taskId, queryText, 'PRIVATE_GROUP');
+    this.store.update({
+      taskId: taskId,
+      taskPhase: 'ROUTING',
+      taskRound: 0,
+      taskFeedback: '',
+      taskCoverage: 0,
+      taskConfidence: 0,
+      taskMissingConcepts: [],
+      taskPrivacyLevel: task.privacyLevel,
+      question: queryText,
+      summary: '',
+      automaticQueryProgress: 'ROUTING',
+      automaticSourceNames: [],
+      automaticExcludedSourceNames: [],
+      evidenceSourceDeviceIds: [],
+      finalSufficiency: '',
+      clearError: true
+    });
+    try {
+      const peers: Array<PeerDevice> = await this.resolverFactory().resolveAll();
+      if (this.connectionPool !== undefined) {
+        await this.connectionPool.refreshPeers(peers);
+      }
+      const connected: PeerDevice[] = [];
+      const excluded: string[] = [];
+      await Promise.all(peers.map(async (peer: PeerDevice): Promise<void> => {
+        try {
+          if (this.tls === undefined) throw new Error('E_DSK_UNAVAILABLE');
+          await this.tls.connect(peer);
+          connected.push(peer);
+        } catch (_) {
+          excluded.push(peer.deviceName.length > 0 ? peer.deviceName : peer.deviceId);
+        }
+      }));
+      this.store.update({
+        automaticExcludedSourceNames: excluded.slice(),
+        automaticSourceNames: ['local'].concat(connected.map((peer: PeerDevice): string =>
+          peer.deviceName.length > 0 ? peer.deviceName : peer.deviceId)),
+        automaticQueryProgress: 'SEARCHING',
+        taskPhase: 'AWAITING_L1'
+      });
+      const result: TaskSufficiencyResult = await this.multiDeviceCoordinator.submit(task);
+      const progress: AutomaticQueryProgress = result.feedback === 'ENOUGH' ? 'ANSWER_READY' :
+        (result.feedback === 'ABORT' ? 'INSUFFICIENT' : 'FAILED');
+      const phase: 'SUFFICIENT' | 'ABORTED' | 'FAILED' = result.feedback === 'ENOUGH' ? 'SUFFICIENT' :
+        (result.feedback === 'ABORT' ? 'ABORTED' : 'FAILED');
+      this.store.update({
+        automaticQueryProgress: progress,
+        taskPhase: phase,
+        taskRound: result.feedback === 'ENOUGH' ? 1 : 2,
+        taskFeedback: result.feedback,
+        taskCoverage: result.coverage,
+        taskConfidence: result.confidence,
+        taskMissingConcepts: result.missingConcepts,
+        finalSufficiency: result.feedback,
+        summary: result.feedback === 'ENOUGH' ?
+          'Answer ready from ' + result.acceptedEvidenceIds.length.toString() + ' evidence items' :
+          'No sufficient evidence found',
+        evidenceSourceDeviceIds: connected.map((peer: PeerDevice): string => peer.deviceId).concat(['local'])
+      });
+    } catch (error) {
+      const appError: AppError = error instanceof AppError ? error :
+        new AppError('E_AUTOMATIC_QUERY_FAILED', 'Automatic query failed', ErrorStage.QUERY, true);
+      this.store.update({ automaticQueryProgress: 'FAILED', taskPhase: 'FAILED', error: appError });
+      throw error as Error;
+    } finally {
+      if (this.automaticTaskId === taskId) this.automaticTaskId = '';
+    }
+  }
+
+  async cancelAutomaticQuery(): Promise<void> {
+    const taskId: string = this.automaticTaskId;
+    if (taskId.length === 0) return;
+    await this.multiDeviceCoordinator.cancel(taskId);
+    this.store.update({ automaticQueryProgress: 'INSUFFICIENT', taskPhase: 'ABORTED', taskFeedback: 'ABORT', finalSufficiency: 'ABORT' });
+    this.automaticTaskId = '';
+  }
+
   async runTlsProbe(): Promise<void> {
     if (this.tlsProbeRunning) {
       return;
@@ -293,6 +445,7 @@ export class AppRuntime {
     this.destroyed = true;
     this.multiDeviceCoordinator.destroy();
     this.peerTaskResponder.destroy();
+    this.runtimeTransport.destroy();
     this.coordinator.destroy();
     this.tls?.destroy().catch((): void => { });
     this.ownedKnowledgeService.destroy();

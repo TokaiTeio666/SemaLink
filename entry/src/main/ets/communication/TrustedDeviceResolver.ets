@@ -32,6 +32,17 @@ export function mapAvailableDevice(device: AvailableDeviceInfo): PeerDevice | un
   };
 }
 
+export function uniqueSortedPeers(devices: PeerDevice[]): PeerDevice[] {
+  const unique = new Map<string, PeerDevice>();
+  for (const device of devices) {
+    if (device.deviceId.length > 0 && !unique.has(device.deviceId)) {
+      unique.set(device.deviceId, device);
+    }
+  }
+  return Array.from(unique.values()).sort((left: PeerDevice, right: PeerDevice): number =>
+    left.deviceId < right.deviceId ? -1 : (left.deviceId > right.deviceId ? 1 : 0));
+}
+
 export class DistributedDeviceProvider implements AvailableDeviceProvider {
   private readonly manager: distributedDeviceManager.DeviceManager;
 
@@ -84,14 +95,7 @@ export class TrustedDeviceResolver {
   async resolveAll(): Promise<Array<PeerDevice>> {
     try {
       const devices: Array<PeerDevice> = await this.provider.list();
-      const unique: Map<string, PeerDevice> = new Map<string, PeerDevice>();
-      for (const device of devices) {
-        if (device.deviceId.length > 0 && !unique.has(device.deviceId)) {
-          unique.set(device.deviceId, device);
-        }
-      }
-      return Array.from(unique.values()).sort((left: PeerDevice, right: PeerDevice): number =>
-        left.deviceId < right.deviceId ? -1 : (left.deviceId > right.deviceId ? 1 : 0));
+      return uniqueSortedPeers(devices);
     } finally {
       this.provider.release();
     }

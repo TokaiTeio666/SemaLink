@@ -6,6 +6,8 @@ import { KnowledgeError } from '../main/ets/contracts/knowledge/KnowledgeError';
 import { KnowledgeProfile } from '../main/ets/contracts/knowledge/KnowledgeModels';
 import { SemanticKnowledgeProvider } from '../main/ets/contracts/semantic/SemanticKnowledgeProvider';
 import { EvidenceUnit, TaskRequest } from '../main/ets/contracts/semantic/SemanticModels';
+import { AgentRuntimeHandle, RuntimeBootstrap } from '../main/ets/runtime/RuntimeBootstrap';
+import { common } from '@kit.AbilityKit';
 
 class CountingTransport implements Transport {
   listener: TransportListener | null = null;
@@ -51,6 +53,15 @@ class FakeSemanticProvider implements SemanticKnowledgeProvider {
   async searchEvidence(task: TaskRequest): Promise<EvidenceUnit[]> {
     this.calls += 1;
     return [];
+  }
+}
+
+class FailingKnowledgeRuntime extends RuntimeBootstrap {
+  attempts: number = 0;
+
+  ensureInitialized(_context: common.Context): Promise<AgentRuntimeHandle> {
+    this.attempts += 1;
+    return Promise.reject(new Error('controlled bootstrap failure'));
   }
 }
 
@@ -133,6 +144,36 @@ export default function appRuntimeTest(): void {
       const runtime = new AppRuntime(fakeContext() as never, { transport: new CountingTransport() });
       expect(runtime.acceptCollaboration({})).assertTrue();
       runtime.destroy();
+    });
+
+    it('borrows process knowledge runtime without destroying it on UI teardown', 0, () => {
+      const bootstrap: RuntimeBootstrap = new RuntimeBootstrap();
+      const shared: Object = bootstrap.knowledgeService() as Object;
+      const runtime: AppRuntime = new AppRuntime(fakeContext() as never, {
+        transport: new CountingTransport(), knowledgeRuntime: bootstrap
+      });
+      expect(runtime.knowledge as Object).assertEqual(shared);
+      runtime.destroy();
+      expect(bootstrap.knowledgeService() as Object).assertEqual(shared);
+      bootstrap.shutdown();
+    });
+
+    it('retries UI knowledge initialization after a failed attempt', 0, async () => {
+      const bootstrap: FailingKnowledgeRuntime = new FailingKnowledgeRuntime();
+      const runtime: AppRuntime = new AppRuntime(fakeContext() as never, {
+        transport: new CountingTransport(), knowledgeRuntime: bootstrap
+      });
+      try {
+        await runtime.initializeKnowledge(fakeContext() as never);
+      } catch (_error) {
+      }
+      try {
+        await runtime.initializeKnowledge(fakeContext() as never);
+      } catch (_error) {
+      }
+      expect(bootstrap.attempts).assertEqual(2);
+      runtime.destroy();
+      bootstrap.shutdown();
     });
   });
 }

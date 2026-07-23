@@ -14,12 +14,14 @@ import {
 
 class CapturingRepository implements DocumentRepository {
   readonly documents: KnowledgeDocument[] = [];
+  readonly chunks: DocumentChunk[] = [];
   private metadata: KnowledgeMetadata = {
     indexState: 'EMPTY', indexVersion: 'index-empty', profileVersion: 'profile-empty', updatedAt: 0
   };
 
   async saveDocumentWithChunks(document: KnowledgeDocument, chunks: DocumentChunk[]): Promise<void> {
     this.documents.push(document);
+    this.chunks.push(...chunks);
   }
 
   async hasChecksum(checksum: string): Promise<boolean> {
@@ -31,8 +33,17 @@ class CapturingRepository implements DocumentRepository {
     return false;
   }
 
+  async listDocuments(): Promise<KnowledgeDocument[]> {
+    return this.documents.slice();
+  }
+
+  async listChunks(): Promise<DocumentChunk[]> {
+    return this.chunks.slice();
+  }
+
   async clearAll(): Promise<void> {
     this.documents.length = 0;
+    this.chunks.length = 0;
   }
 
   async getStatistics(): Promise<RepositoryStatistics> {

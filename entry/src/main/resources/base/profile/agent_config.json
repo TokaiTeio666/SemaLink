@@ -11,7 +11,7 @@
       "version": "1.0.0",
       "documentationUrl": "https://github.com/TokaiTeio666/SemaLink",
       "capabilities": {
-        "streaming": false,
+        "streaming": true,
         "pushNotifications": false,
         "stateTransitionHistory": false,
         "extendedAgentCard": false

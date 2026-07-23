@@ -34,6 +34,7 @@ import {
   LocalKnowledgeResult
 } from '../contracts/knowledge/KnowledgeModels';
 import { EvidenceUnit, TaskRequest } from '../contracts/semantic/SemanticModels';
+import { RuntimeBootstrap } from './RuntimeBootstrap';
 
 class RuntimeCoordinatorTransport implements CoordinatorTransport {
   private readonly pool: PeerConnectionPool | undefined;
@@ -62,6 +63,7 @@ export interface RuntimeDependencies {
   transport?: Transport;
   resolverFactory?: ResolverFactory;
   knowledgeProvider?: SemanticKnowledgeProvider;
+  knowledgeRuntime?: RuntimeBootstrap;
 }
 
 export class AppRuntime {
@@ -85,6 +87,8 @@ export class AppRuntime {
   readonly controlHub: DskControlHub | undefined;
   readonly connectionPool: PeerConnectionPool | undefined;
   private readonly ownedKnowledgeService: KnowledgeApplicationService;
+  private readonly ownsKnowledgeService: boolean;
+  private readonly knowledgeRuntime?: RuntimeBootstrap;
   private readonly context: common.UIAbilityContext;
   private knowledgeInitialization?: Promise<void>;
 
@@ -98,8 +102,10 @@ export class AppRuntime {
       transport, codec, new SequenceIdGenerator(), new SystemScheduler(), 3000, 10000
     );
     this.store = new AppStateStore();
-    this.knowledge = new KnowledgeApplicationService();
+    this.knowledgeRuntime = dependencies.knowledgeRuntime;
+    this.knowledge = dependencies.knowledgeRuntime?.knowledgeService() ?? new KnowledgeApplicationService();
     this.ownedKnowledgeService = this.knowledge;
+    this.ownsKnowledgeService = dependencies.knowledgeRuntime === undefined;
     const resolverFactory: ResolverFactory = dependencies.resolverFactory ??
       (() => new TrustedDeviceResolver(new DistributedDeviceProvider(bundleName)));
     if (dependencies.knowledgeProvider !== undefined) {
@@ -148,7 +154,11 @@ export class AppRuntime {
   async initializeKnowledge(context?: common.UIAbilityContext): Promise<void> {
     if (context !== undefined) {
       if (this.knowledgeInitialization === undefined) {
-        this.knowledgeInitialization = this.prepareKnowledge(context);
+        this.knowledgeInitialization = this.prepareKnowledge(context)
+          .catch((error: Object): Promise<void> => {
+            this.knowledgeInitialization = undefined;
+            return Promise.reject(error);
+          });
       }
       await this.knowledgeInitialization;
       return;
@@ -257,9 +267,9 @@ export class AppRuntime {
     }
   }
 
-  static initialize(context: common.UIAbilityContext): AppRuntime {
+  static initialize(context: common.UIAbilityContext, dependencies: RuntimeDependencies = {}): AppRuntime {
     if (AppRuntime.active === null) {
-      AppRuntime.active = new AppRuntime(context);
+      AppRuntime.active = new AppRuntime(context, dependencies);
     }
     return AppRuntime.active;
   }
@@ -295,7 +305,9 @@ export class AppRuntime {
     this.peerTaskResponder.destroy();
     this.coordinator.destroy();
     this.tls?.destroy().catch((): void => { });
-    this.ownedKnowledgeService.destroy();
+    if (this.ownsKnowledgeService) {
+      this.ownedKnowledgeService.destroy();
+    }
   }
 
   private createTlsCoordinator(context: common.UIAbilityContext, bundleName: string): Task3TlsCoordinator | undefined {
@@ -309,7 +321,11 @@ export class AppRuntime {
   private async prepareKnowledge(context: common.UIAbilityContext): Promise<void> {
     this.store.update({ knowledgeBusy: true, knowledgeMessage: '正在初始化知识库', knowledgeError: '' });
     try {
-      await this.knowledge.initialize(context);
+      if (this.knowledgeRuntime !== undefined) {
+        await this.knowledgeRuntime.ensureInitialized(context);
+      } else {
+        await this.knowledge.initialize(context);
+      }
       const profile: KnowledgeProfile = await this.knowledge.getKnowledgeProfile();
       if (profile.indexState === 'EMPTY') {
         await this.knowledge.importBuiltInDocuments();

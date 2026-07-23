@@ -53,6 +53,14 @@ class SecondSaveFailingRepository implements DocumentRepository {
     return false;
   }
 
+  async listDocuments(): Promise<KnowledgeDocument[]> {
+    return [];
+  }
+
+  async listChunks(): Promise<DocumentChunk[]> {
+    return [];
+  }
+
   async clearAll(): Promise<void> {
   }
 

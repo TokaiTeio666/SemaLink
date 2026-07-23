@@ -57,6 +57,8 @@ class ProviderRepository implements DocumentRepository {
 
   async saveDocumentWithChunks(document: KnowledgeDocument, chunks: DocumentChunk[]): Promise<void> {}
   async hasChecksum(checksum: string): Promise<boolean> { return false; }
+  async listDocuments(): Promise<KnowledgeDocument[]> { return this.documents.slice(); }
+  async listChunks(): Promise<DocumentChunk[]> { return this.chunks.slice(); }
   async clearAll(): Promise<void> {}
   async setMetadata(metadata: KnowledgeMetadata): Promise<void> { this.metadata = metadata; }
 

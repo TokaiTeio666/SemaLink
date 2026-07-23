@@ -1,10 +1,11 @@
 import { common } from '@kit.AbilityKit';
 import { DskControlHub, DskControlHubListener } from '../control/DskControlHub';
+import { CollaborationApi } from '../control/CollaborationApi';
 import { ControlEnvelope } from '../control/ControlModels';
 import { AppError } from '../../common/AppError';
 import { Logger } from '../../common/Logger';
 import { PeerDevice } from '../../model/AppModels';
-import { PeerConnectionPool, PeerConnectionStateListener } from '../PeerConnectionPool';
+import { BindingTokenGenerator, PeerConnectionPool, PeerConnectionStateListener } from '../PeerConnectionPool';
 
 interface IncomingPeerInfo { deviceId?: string; }
 interface DataFrameMessage { type: string; payload: Object; }
@@ -15,6 +16,8 @@ export interface Task3TlsCoordinatorOptions {
   context: common.UIAbilityContext;
   bundleName: string;
   logger?: Logger;
+  collaborationApi?: CollaborationApi;
+  tokenGenerator?: BindingTokenGenerator;
 }
 
 export type Task3ConnectionStateObserver = (peer: PeerDevice, failureCode: string) => void;
@@ -35,8 +38,8 @@ export class Task3TlsCoordinator implements DskControlHubListener {
 
   constructor(options: Task3TlsCoordinatorOptions) {
     this.logger = options.logger ?? new Logger();
-    this.dsk = new DskControlHub(options.context, options.bundleName, this.logger, undefined, this);
-    this.pool = new PeerConnectionPool(this.dsk);
+    this.dsk = new DskControlHub(options.context, options.bundleName, this.logger, options.collaborationApi, this);
+    this.pool = new PeerConnectionPool(this.dsk, undefined, options.tokenGenerator);
     this.poolStateObserver = (deviceId: string): void => this.publishConnectionState(deviceId);
     this.pool.onStateChanged(this.poolStateObserver);
   }
@@ -56,6 +59,41 @@ export class Task3TlsCoordinator implements DskControlHubListener {
         this.connecting.delete(peer.deviceId);
       }
     }
+  }
+
+  setLocalDeviceId(deviceId: string): void {
+    this.dsk.setLocalDeviceId(deviceId);
+  }
+
+  async registerPeers(peers: PeerDevice[]): Promise<void> {
+    const keep = new Set<string>();
+    this.peers.clear();
+    for (const peer of peers) {
+      if (peer.deviceId.length === 0 || keep.has(peer.deviceId)) continue;
+      keep.add(peer.deviceId);
+      this.peers.set(peer.deviceId, peer);
+    }
+    for (const deviceId of this.installedDataHandlers) {
+      if (!keep.has(deviceId)) this.installedDataHandlers.delete(deviceId);
+    }
+    for (const deviceId of this.failures.keys()) {
+      if (!keep.has(deviceId)) this.failures.delete(deviceId);
+    }
+    await this.pool.refreshPeers(Array.from(this.peers.values()));
+    for (const peer of this.peers.values()) this.installDataHandler(peer.deviceId);
+  }
+
+  isReady(deviceId: string): boolean {
+    return this.dsk.stateOf(deviceId) === 'READY' && this.pool.stateOf(deviceId) === 'READY';
+  }
+
+  async disconnectPeer(deviceId: string): Promise<void> {
+    this.connecting.delete(deviceId);
+    this.installedDataHandlers.delete(deviceId);
+    this.peers.delete(deviceId);
+    this.failures.delete(deviceId);
+    await this.dsk.disconnect(deviceId);
+    await this.pool.refreshPeers(Array.from(this.peers.values()));
   }
 
   private async connectInternal(peer: PeerDevice): Promise<void> {

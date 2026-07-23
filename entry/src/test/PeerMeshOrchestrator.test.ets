@@ -178,6 +178,25 @@ export default function peerMeshOrchestratorTest(): void {
       expect(timer.scheduledDelays).assertDeepEquals([1000, 2000, 4000, 8000, 30000]);
     });
 
+    it('retriesImmediatelyWhenLifecycleReconcilesDuringBackoff', 0, async () => {
+      const provider = new FakeTopologyProvider({ localDeviceId: 'device-b', peers: [PEER_A] });
+      const transport = new FakeMeshTransport();
+      const timer = new FakeMeshTimer();
+      transport.failNext('device-a', 1);
+      const mesh = new PeerMeshOrchestrator(provider, transport, timer);
+      await mesh.reconcile();
+      timer.advance(3000);
+      await flushAsync();
+      expect(transport.connectCalls).assertDeepEquals(['device-a']);
+      expect(timer.pendingCount()).assertEqual(1);
+
+      await mesh.reconcile();
+
+      expect(timer.cancelledDelays).assertDeepEquals([1000]);
+      expect(transport.connectCalls).assertDeepEquals(['device-a', 'device-a']);
+      expect(timer.pendingCount()).assertEqual(0);
+    });
+
     it('removingOnePeerCancelsOnlyItsRetry', 0, async () => {
       const provider = new FakeTopologyProvider({ localDeviceId: 'device-a', peers: [PEER_B, PEER_C] });
       const transport = new FakeMeshTransport();
@@ -224,6 +243,24 @@ export default function peerMeshOrchestratorTest(): void {
 
       expect(ready).assertDeepEquals(['device-c']);
       expect(timer.now()).assertEqual(100);
+    });
+
+    it('publishesPeerSnapshotsAfterTopologyEvents', 0, async () => {
+      const provider = new FakeTopologyProvider({ localDeviceId: 'device-a', peers: [PEER_B] });
+      const transport = new FakeMeshTransport();
+      const timer = new FakeMeshTimer();
+      const snapshots: string[][] = [];
+      const mesh = new PeerMeshOrchestrator(provider, transport, timer,
+        (peers: PeerDevice[]): void => {
+          snapshots.push(peers.map((peer: PeerDevice): string => peer.deviceId));
+        });
+      await mesh.start();
+      provider.setSnapshot({ localDeviceId: 'device-a', peers: [PEER_C] });
+      provider.emitChanged();
+      timer.advance(300);
+      await flushAsync();
+
+      expect(snapshots).assertDeepEquals([['device-b'], ['device-c']]);
     });
 
     it('stopsAndCancelsAllCallbacksOnDestroy', 0, async () => {

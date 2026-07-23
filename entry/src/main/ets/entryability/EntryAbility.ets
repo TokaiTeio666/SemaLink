@@ -67,8 +67,8 @@ export default class EntryAbility extends UIAbility {
           hilog.info(DOMAIN, 'testTag', 'permission_request_finished: %{public}s',
             granted ? 'granted' : 'denied');
           if (granted) {
-            AppRuntime.current().refreshAvailableDevices(true).catch((error: Object) => {
-              hilog.error(DOMAIN, 'testTag', 'Device discovery failed: %{public}s', JSON.stringify(error));
+            AppRuntime.current().startPeerMesh().catch((error: Object) => {
+              hilog.error(DOMAIN, 'testTag', 'Peer mesh start failed: %{public}s', JSON.stringify(error));
             });
           }
         });
@@ -82,8 +82,8 @@ export default class EntryAbility extends UIAbility {
   onForeground(): void {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onForeground');
     if (this.distributedPermissionGranted) {
-      AppRuntime.current().refreshAvailableDevices(true).catch((error: Object) => {
-        hilog.error(DOMAIN, 'testTag', 'Foreground device discovery failed: %{public}s', JSON.stringify(error));
+      AppRuntime.current().refreshPeerMesh().catch((error: Object) => {
+        hilog.error(DOMAIN, 'testTag', 'Foreground peer mesh refresh failed: %{public}s', JSON.stringify(error));
       });
     }
   }

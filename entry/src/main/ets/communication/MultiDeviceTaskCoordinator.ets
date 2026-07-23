@@ -58,7 +58,7 @@ export class MultiDeviceTaskCoordinator {
         .sort((left: CoordinatorCandidate, right: CoordinatorCandidate): number => {
           if (right.routeScore !== left.routeScore) return right.routeScore - left.routeScore;
           return left.deviceId.localeCompare(right.deviceId);
-        }).slice(0, 2);
+        });
       const selected: CoordinatorCandidate[] = [];
       if (local !== undefined) selected.push(local);
       for (const remote of remotes) selected.push(remote);

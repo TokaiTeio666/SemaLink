@@ -39,6 +39,8 @@ import { EvidenceUtilityScheduler } from '../communication/EvidenceUtilitySchedu
 import { TaskSufficiencyEvaluator } from '../communication/TaskSufficiencyEvaluator';
 import { ProgressiveQueryCoordinator } from '../communication/ProgressiveQueryCoordinator';
 import { Task3ConnectionStateObserver, Task3TlsCoordinator } from '../communication/tls/Task3TlsCoordinator';
+import { HarmonyDeviceTopologyProvider } from '../communication/DeviceTopologyProvider';
+import { PeerMeshController, PeerMeshOrchestrator } from '../communication/PeerMeshOrchestrator';
 import {
   activePeerCount as countActivePeers,
   PeerChannelStateSource,
@@ -144,10 +146,17 @@ class RuntimeCoordinatorTransport implements CoordinatorTransport {
   }
 }
 
+export type PeerMeshFactory = (
+  tls: Task3TlsCoordinator | undefined,
+  bundleName: string
+) => PeerMeshController | undefined;
+
 export interface RuntimeDependencies {
   transport?: Transport;
   resolverFactory?: ResolverFactory;
   knowledgeProvider?: SemanticKnowledgeProvider;
+  meshFactory?: PeerMeshFactory;
+  coordinatorTransport?: CoordinatorTransport;
 }
 
 export class AppRuntime {
@@ -174,7 +183,11 @@ export class AppRuntime {
   private readonly context: common.UIAbilityContext;
   private readonly runtimeTransport: RuntimeCoordinatorTransport;
   private readonly resolverFactory: ResolverFactory;
+  private readonly bundleName: string;
+  private readonly meshFactory: PeerMeshFactory | undefined;
+  private mesh: PeerMeshController | undefined;
   private readonly automaticIdGenerator: SequenceIdGenerator;
+  private readonly automaticReadyPeerIds = new Set<string>();
   private readonly discoveredPeers = new Map<string, PeerDevice>();
   private readonly peerFailures = new Map<string, string>();
   private readonly connectionObserver: Task3ConnectionStateObserver;
@@ -184,6 +197,8 @@ export class AppRuntime {
   constructor(context: common.UIAbilityContext, dependencies: RuntimeDependencies = {}) {
     this.context = context;
     const bundleName: string = context.applicationInfo.name;
+    this.bundleName = bundleName;
+    this.meshFactory = dependencies.meshFactory;
     const transport: Transport = dependencies.transport ??
       new CollaborationTransport(context, bundleName, new Logger());
     const codec: ProtocolCodec = new ProtocolCodec();
@@ -217,6 +232,7 @@ export class AppRuntime {
     this.tls = this.createTlsCoordinator(context, bundleName);
     this.controlHub = this.tls?.dsk;
     this.connectionPool = this.tls?.pool;
+    this.mesh = this.meshFactory !== undefined ? this.meshFactory(this.tls, bundleName) : undefined;
     this.connectionObserver = (peer: PeerDevice, failureCode: string): void => {
       if (this.destroyed) return;
       this.discoveredPeers.set(peer.deviceId, peer);
@@ -230,11 +246,12 @@ export class AppRuntime {
     this.tls?.onConnectionStateChanged(this.connectionObserver);
     this.evidenceAggregator = new EvidenceAggregator();
     this.runtimeTransport = new RuntimeCoordinatorTransport(this.connectionPool, this.knowledgeProvider);
-    const taskTransport: CoordinatorTransport = this.runtimeTransport;
+    const taskTransport: CoordinatorTransport = dependencies.coordinatorTransport ?? this.runtimeTransport;
     this.multiDeviceCoordinator = new MultiDeviceTaskCoordinator(taskTransport, (): CoordinatorCandidate[] => {
       const candidates: CoordinatorCandidate[] = [{ deviceId: 'local', isLocal: true, routeScore: 1, ready: true }];
-      const readyIds: string[] = this.connectionPool?.readyDeviceIds() ?? [];
-      for (const deviceId of readyIds) candidates.push({ deviceId, isLocal: false, routeScore: 1, ready: true });
+      for (const deviceId of this.automaticReadyPeerIds) {
+        candidates.push({ deviceId, isLocal: false, routeScore: 1, ready: true });
+      }
       return candidates;
     });
     this.semanticTaskCoordinator = this.multiDeviceCoordinator;
@@ -378,31 +395,33 @@ export class AppRuntime {
     });
     let automaticRecordCreated: boolean = false;
     try {
-      const peers: Array<PeerDevice> = await this.resolverFactory().resolveAll();
-      for (const peer of peers) this.discoveredPeers.set(peer.deviceId, peer);
-      this.publishPeerStatuses();
-      if (this.connectionPool !== undefined) {
-        await this.connectionPool.refreshPeers(peers);
+      let readyIds: string[] = [];
+      const mesh: PeerMeshController | undefined = this.ensurePeerMesh();
+      if (mesh !== undefined) {
+        readyIds = await mesh.ensureReady(3000);
+        this.replaceDiscoveredPeers(mesh.knownPeers());
+        this.publishPeerStatuses();
       }
-      const connected: PeerDevice[] = [];
+      const ready = new Set<string>(readyIds);
+      const readyPeers: PeerDevice[] = [];
       const excluded: string[] = [];
-      await Promise.all(peers.map(async (peer: PeerDevice): Promise<void> => {
-        try {
-          if (this.tls === undefined) throw new Error('E_DSK_UNAVAILABLE');
-          await this.tls.connect(peer);
-          connected.push(peer);
-        } catch (_) {
+      for (const peer of this.discoveredPeers.values()) {
+        if (ready.has(peer.deviceId)) {
+          readyPeers.push(peer);
+        } else {
           excluded.push(peer.deviceName.length > 0 ? peer.deviceName : peer.deviceId);
         }
-      }));
+      }
+      this.automaticReadyPeerIds.clear();
+      for (const peer of readyPeers) this.automaticReadyPeerIds.add(peer.deviceId);
       this.store.update({
         automaticExcludedSourceNames: excluded.slice(),
-        automaticSourceNames: ['local'].concat(connected.map((peer: PeerDevice): string =>
+        automaticSourceNames: ['local'].concat(readyPeers.map((peer: PeerDevice): string =>
           peer.deviceName.length > 0 ? peer.deviceName : peer.deviceId)),
         automaticQueryProgress: 'SEARCHING',
         taskPhase: 'AWAITING_L1'
       });
-      const sourceNames: string[] = ['local'].concat(connected.map((peer: PeerDevice): string =>
+      const sourceNames: string[] = ['local'].concat(readyPeers.map((peer: PeerDevice): string =>
         peer.deviceName.length > 0 ? peer.deviceName : peer.deviceId));
       const automaticRecord: CollaborationRecord = createSendingRecord({
         id: taskId,
@@ -465,31 +484,37 @@ export class AppRuntime {
       }
       throw error as Error;
     } finally {
+      this.automaticReadyPeerIds.clear();
       if (this.automaticTaskId === taskId) this.automaticTaskId = '';
     }
   }
 
   async refreshAvailableDevices(connectDiscovered: boolean = false): Promise<void> {
-    const peers: Array<PeerDevice> = await this.resolverFactory().resolveAll();
-    this.discoveredPeers.clear();
-    for (const peer of peers) this.discoveredPeers.set(peer.deviceId, peer);
-    const knownIds = new Set<string>(peers.map((peer: PeerDevice): string => peer.deviceId));
-    for (const deviceId of this.peerFailures.keys()) {
-      if (!knownIds.has(deviceId)) this.peerFailures.delete(deviceId);
+    let peers: PeerDevice[];
+    const mesh: PeerMeshController | undefined = connectDiscovered ? this.ensurePeerMesh() : undefined;
+    if (mesh !== undefined) {
+      await mesh.reconcile();
+      peers = mesh.knownPeers();
+    } else {
+      peers = await this.resolverFactory().resolveAll();
     }
+    this.replaceDiscoveredPeers(peers);
     this.publishPeerStatuses();
-    if (connectDiscovered && this.tls !== undefined) {
-      await Promise.all(peers.map(async (peer: PeerDevice): Promise<void> => {
-        this.peerFailures.delete(peer.deviceId);
-        this.publishPeerStatuses();
-        try {
-          await this.tls?.connect(peer);
-        } catch (error) {
-          this.peerFailures.set(peer.deviceId, error instanceof AppError ? error.code : 'E_CONNECT_FAILED');
-          this.publishPeerStatuses();
-        }
-      }));
-    }
+  }
+
+  async startPeerMesh(): Promise<void> {
+    const mesh: PeerMeshController | undefined = this.ensurePeerMesh();
+    if (mesh === undefined) return;
+    await mesh.start();
+    this.replaceDiscoveredPeers(mesh.knownPeers());
+    this.publishPeerStatuses();
+  }
+
+  async refreshPeerMesh(): Promise<void> {
+    const mesh: PeerMeshController | undefined = this.ensurePeerMesh();
+    if (mesh === undefined) return;
+    await mesh.reconcile();
+    this.replaceDiscoveredPeers(mesh.knownPeers());
     this.publishPeerStatuses();
   }
 
@@ -580,6 +605,7 @@ export class AppRuntime {
     this.peerTaskResponder.destroy();
     this.runtimeTransport.destroy();
     this.coordinator.destroy();
+    this.mesh?.destroy();
     this.tls?.removeConnectionStateChanged(this.connectionObserver);
     this.tls?.destroy().catch((): void => { });
     this.ownedKnowledgeService.destroy();
@@ -590,6 +616,43 @@ export class AppRuntime {
       return new Task3TlsCoordinator({ context: context, bundleName: bundleName });
     } catch (_) {
       return undefined;
+    }
+  }
+
+  private createPeerMesh(bundleName: string): PeerMeshController | undefined {
+    if (this.tls === undefined) return undefined;
+    try {
+      return new PeerMeshOrchestrator(
+        new HarmonyDeviceTopologyProvider(bundleName),
+        this.tls,
+        undefined,
+        (peers: PeerDevice[]): void => {
+          if (this.destroyed) return;
+          this.replaceDiscoveredPeers(peers);
+          this.publishPeerStatuses();
+        }
+      );
+    } catch (_) {
+      return undefined;
+    }
+  }
+
+  private ensurePeerMesh(): PeerMeshController | undefined {
+    if (this.mesh === undefined && this.meshFactory === undefined) {
+      this.mesh = this.createPeerMesh(this.bundleName);
+    }
+    return this.mesh;
+  }
+
+  private replaceDiscoveredPeers(peers: PeerDevice[]): void {
+    this.discoveredPeers.clear();
+    const knownIds = new Set<string>();
+    for (const peer of peers) {
+      this.discoveredPeers.set(peer.deviceId, peer);
+      knownIds.add(peer.deviceId);
+    }
+    for (const deviceId of this.peerFailures.keys()) {
+      if (!knownIds.has(deviceId)) this.peerFailures.delete(deviceId);
     }
   }
 

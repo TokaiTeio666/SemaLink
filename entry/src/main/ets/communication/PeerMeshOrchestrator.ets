@@ -30,6 +30,8 @@ export interface PeerMeshController {
   destroy(): void;
 }
 
+export type PeerMeshSnapshotObserver = (peers: PeerDevice[]) => void;
+
 interface PeerMeshState {
   peer: PeerDevice;
   graceTimer: number | undefined;
@@ -57,6 +59,7 @@ export class PeerMeshOrchestrator implements PeerMeshController {
   private readonly provider: DeviceTopologyProvider;
   private readonly transport: MeshPeerTransport;
   private readonly timer: MeshTimer;
+  private readonly snapshotObserver: PeerMeshSnapshotObserver | undefined;
   private readonly states = new Map<string, PeerMeshState>();
   private peers: PeerDevice[] = [];
   private topologyTimer: number | undefined;
@@ -65,10 +68,12 @@ export class PeerMeshOrchestrator implements PeerMeshController {
   private started: boolean = false;
   private destroyed: boolean = false;
 
-  constructor(provider: DeviceTopologyProvider, transport: MeshPeerTransport, timer?: MeshTimer) {
+  constructor(provider: DeviceTopologyProvider, transport: MeshPeerTransport, timer?: MeshTimer,
+    snapshotObserver?: PeerMeshSnapshotObserver) {
     this.provider = provider;
     this.transport = transport;
     this.timer = timer ?? new SystemMeshTimer();
+    this.snapshotObserver = snapshotObserver;
   }
 
   async start(): Promise<void> {
@@ -159,15 +164,26 @@ export class PeerMeshOrchestrator implements PeerMeshController {
     this.peers = peers;
     for (const peer of peers) {
       let state = this.states.get(peer.deviceId);
+      let retryImmediately: boolean = false;
       if (state === undefined) {
         state = { peer: peer, graceTimer: undefined, retryTimer: undefined, retryAttempt: 0,
           connecting: false };
         this.states.set(peer.deviceId, state);
       } else {
         state.peer = peer;
+        if (state.retryTimer !== undefined) {
+          this.timer.cancel(state.retryTimer);
+          state.retryTimer = undefined;
+          retryImmediately = true;
+        }
       }
-      await this.ensurePeer(snapshot.localDeviceId, state);
+      if (retryImmediately) {
+        await this.attemptConnect(peer.deviceId);
+      } else {
+        await this.ensurePeer(snapshot.localDeviceId, state);
+      }
     }
+    this.publishPeerSnapshot();
   }
 
   private async ensurePeer(localDeviceId: string, state: PeerMeshState): Promise<void> {
@@ -293,5 +309,12 @@ export class PeerMeshOrchestrator implements PeerMeshController {
     }
     return Array.from(unique.values()).sort((left: PeerDevice, right: PeerDevice): number =>
       left.deviceId < right.deviceId ? -1 : (left.deviceId > right.deviceId ? 1 : 0));
+  }
+
+  private publishPeerSnapshot(): void {
+    if (this.snapshotObserver === undefined || this.destroyed) return;
+    try {
+      this.snapshotObserver(this.knownPeers());
+    } catch (_) {}
   }
 }

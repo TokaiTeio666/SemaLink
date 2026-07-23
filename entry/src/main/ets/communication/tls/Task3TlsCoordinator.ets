@@ -6,6 +6,7 @@ import { AppError } from '../../common/AppError';
 import { Logger } from '../../common/Logger';
 import { PeerDevice } from '../../model/AppModels';
 import { BindingTokenGenerator, PeerConnectionPool, PeerConnectionStateListener } from '../PeerConnectionPool';
+import { MeshPeerTransport } from '../PeerMeshOrchestrator';
 
 interface IncomingPeerInfo { deviceId?: string; }
 interface DataFrameMessage { type: string; payload: Object; }
@@ -23,7 +24,7 @@ export interface Task3TlsCoordinatorOptions {
 export type Task3ConnectionStateObserver = (peer: PeerDevice, failureCode: string) => void;
 
 /** Task3 compatibility facade. Data now stays entirely on authenticated DSK/SoftBus. */
-export class Task3TlsCoordinator implements DskControlHubListener {
+export class Task3TlsCoordinator implements DskControlHubListener, MeshPeerTransport {
   readonly dsk: DskControlHub;
   readonly pool: PeerConnectionPool;
   private readonly logger: Logger;

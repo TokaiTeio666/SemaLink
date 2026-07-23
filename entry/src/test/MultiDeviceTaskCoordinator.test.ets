@@ -21,6 +21,7 @@ function unit(id: string, concept: string, source: string, level: 'L1' | 'L2' = 
 }
 class FakeTransport implements CoordinatorTransport {
   sent: string[] = [];
+  searched: string[] = [];
   envelopes: Array<Record<string, Object>> = [];
   private readonly responses: Map<string, EvidenceUnit[]>;
   private readonly failingSearches: Set<string>;
@@ -34,6 +35,7 @@ class FakeTransport implements CoordinatorTransport {
     return Promise.resolve();
   }
   search(deviceId: string, _request: TaskRequest, round: 1 | 2): Promise<EvidenceUnit[]> {
+    this.searched.push(deviceId + ':' + round);
     if (this.failingSearches.has(deviceId + ':' + round)) return Promise.reject(new Error('search failed'));
     return Promise.resolve(this.responses.get(deviceId + ':' + round) ?? []);
   }
@@ -91,10 +93,11 @@ export default function multiDeviceTaskCoordinatorTest(): void {
       expect(transport.envelopes[0]['type']).assertEqual('TASK');
     });
 
-    it('selectsHighestScoringReadyRemotesAndKeepsLocalEvidenceWhenRemoteFails', 0, async () => {
+    it('runsLocalAndAllReadyRemotesAndKeepsOtherEvidenceWhenOneRemoteFails', 0, async () => {
       const transport = new FakeTransport(
-        new Map<string, EvidenceUnit[]>([['local:1', [unit('local-alpha', 'alpha', 'local'), unit('local-beta', 'beta', 'local')]],
-          ['remote-high:1', [unit('remote-beta', 'beta', 'remote-high')]]]),
+        new Map<string, EvidenceUnit[]>([['local:1', [unit('local-alpha', 'alpha', 'local')]],
+          ['remote-low:1', [unit('remote-beta', 'beta', 'remote-low')]],
+          ['remote-mid:1', [unit('remote-mid-beta', 'beta', 'remote-mid')]]]),
         new Set<string>(['remote-high:1'])
       );
       const coordinator = new MultiDeviceTaskCoordinator(transport, () => [
@@ -105,7 +108,12 @@ export default function multiDeviceTaskCoordinatorTest(): void {
       expect(result.feedback).assertEqual('ENOUGH');
       expect(transport.sent.indexOf('remote-high:TASK') >= 0).assertTrue();
       expect(transport.sent.indexOf('remote-mid:TASK') >= 0).assertTrue();
-      expect(transport.sent.indexOf('remote-low:TASK')).assertEqual(-1);
+      expect(transport.sent.indexOf('remote-low:TASK') >= 0).assertTrue();
+      expect(transport.searched.indexOf('local:1') >= 0).assertTrue();
+      expect(transport.searched.indexOf('remote-high:1') >= 0).assertTrue();
+      expect(transport.searched.indexOf('remote-mid:1') >= 0).assertTrue();
+      expect(transport.searched.indexOf('remote-low:1') >= 0).assertTrue();
+      expect(result.acceptedEvidence.length).assertEqual(3);
     });
   });
 }

@@ -76,8 +76,12 @@ export class PeerConnectionPool {
     try {
       connection.bindingToken = await this.tokenGenerator.generate();
     } catch (error) {
+      if (this.connections.get(deviceId) !== connection || this.stateOf(deviceId) === 'READY') return true;
       this.transition(deviceId, connection, 'FAILED');
       throw error as Error;
+    }
+    if (this.connections.get(deviceId) !== connection || this.stateOf(deviceId) !== 'BINDING') {
+      return this.stateOf(deviceId) === 'READY';
     }
     connection.sessionEpoch = connection.bindingToken;
     connection.expiresAtMs = this.clock() + 30000;
@@ -86,7 +90,7 @@ export class PeerConnectionPool {
     const result = new Promise<boolean>((resolve) => {
       connection.bindWaiter = resolve;
       const timer = setTimeout((): void => {
-        if (connection.bindWaiter !== undefined) {
+        if (connection.bindWaiter === resolve && connection.state === 'BINDING') {
           connection.bindWaiter = undefined;
           this.transition(deviceId, connection, 'FAILED');
           resolve(false);
@@ -98,6 +102,7 @@ export class PeerConnectionPool {
     try {
       await this.dataChannel.send(deviceId, JSON.stringify({ type: 'DATA_BIND', payload: bind }));
     } catch (error) {
+      if (this.connections.get(deviceId) !== connection || this.stateOf(deviceId) === 'READY') return true;
       connection.bindWaiter = undefined;
       this.transition(deviceId, connection, 'FAILED');
       this.clearBindTimer(deviceId);
@@ -111,23 +116,29 @@ export class PeerConnectionPool {
     // The payload identifies the initiator's target, while the transport session
     // identifies the peer visible to the responder. Use the session key at the
     // receiving side and retain payload.deviceId in the ACK for the initiator.
+    if (payload === undefined || payload === null ||
+      typeof payload.deviceId !== 'string' || payload.deviceId.length === 0 ||
+      typeof payload.controlSessionId !== 'string' || payload.controlSessionId.length === 0 ||
+      !Number.isInteger(payload.endpointVersion) || payload.endpointVersion < 1 ||
+      typeof payload.bindingToken !== 'string' || payload.bindingToken.length === 0 ||
+      typeof payload.sessionEpoch !== 'string' || payload.sessionEpoch.length === 0) return false;
+    if (payload.controlSessionId !== payload.deviceId || payload.sessionEpoch !== payload.bindingToken) return false;
     const deviceId: string = transportDeviceId ?? payload.deviceId;
     const connection = this.connections.get(deviceId);
     if (connection === undefined) return false;
     if (connection.state !== 'DISCONNECTED' && connection.state !== 'BINDING') return false;
-    if (connection.state === 'BINDING' && (connection.endpointVersion !== payload.endpointVersion ||
-      connection.bindingToken !== payload.bindingToken || connection.sessionEpoch !== payload.sessionEpoch ||
-      connection.expiresAtMs <= this.clock())) {
-      this.transition(deviceId, connection, 'FAILED');
-      return false;
-    }
     if (this.usedTokens.has(payload.bindingToken)) return false;
     this.usedTokens.add(payload.bindingToken);
     this.usedTokenAt.set(payload.bindingToken, this.clock());
+    const localBindWaiter = connection.bindWaiter;
+    this.clearBindTimer(deviceId);
+    connection.bindWaiter = undefined;
     connection.endpointVersion = payload.endpointVersion;
     connection.bindingToken = '';
     connection.sessionEpoch = payload.sessionEpoch;
+    connection.expiresAtMs = 0;
     this.transition(deviceId, connection, 'READY');
+    localBindWaiter?.(true);
     return true;
   }
 
@@ -200,7 +211,8 @@ export class PeerConnectionPool {
     try { message = JSON.parse(text) as DataFrameMessage; } catch (_) { return; }
     if (message.type === 'DATA_BIND') {
       const payload = message.payload as DataBindPayload;
-      this.logger.info('DSK_BIND_RECEIVED', 'transport=' + deviceId.slice(-4) + ' payload=' + payload.deviceId.slice(-4));
+      this.logger.info('DSK_BIND_RECEIVED', 'transport=' + deviceId.slice(-4) +
+        ' state=' + this.stateOf(deviceId));
       this.acceptBinding(payload, deviceId).then((accepted: boolean): void => {
         this.logger.info(accepted ? 'DSK_BIND_ACCEPTED' : 'DSK_BIND_REJECTED', 'transport=' + deviceId.slice(-4));
         if (!accepted) return;

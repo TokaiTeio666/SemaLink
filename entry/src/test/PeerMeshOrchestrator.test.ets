@@ -145,56 +145,84 @@ async function flushAsync(): Promise<void> {
 
 export default function peerMeshOrchestratorTest(): void {
   describe('PeerMeshOrchestrator', () => {
-    it('dialsPrimaryPeersImmediatelyAndWaitsThreeSecondsForInboundPeers', 0, async () => {
+    it('dialsOnlyTheEdgeAssignedToEachAbsoluteTimeSlot', 0, async () => {
       const provider = new FakeTopologyProvider({ localDeviceId: 'device-b', peers: [PEER_A, PEER_C] });
       const transport = new FakeMeshTransport();
       const timer = new FakeMeshTimer();
       const mesh = new PeerMeshOrchestrator(provider, transport, timer);
 
       await mesh.reconcile();
-      expect(transport.connectCalls).assertDeepEquals(['device-c']);
-      timer.advance(2999);
+      expect(transport.connectCalls.length).assertEqual(0);
+      timer.advance(23999);
       await flushAsync();
-      expect(transport.connectCalls).assertDeepEquals(['device-c']);
+      expect(transport.connectCalls.length).assertEqual(0);
       timer.advance(1);
       await flushAsync();
-      expect(transport.connectCalls).assertDeepEquals(['device-c', 'device-a']);
+      expect(transport.connectCalls).assertDeepEquals(['device-c']);
     });
 
-    it('backsOffEachPeerIndependently', 0, async () => {
+    it('serializesAllThreeEdgesAcrossThreeIndependentNodes', 0, async () => {
+      const timerA = new FakeMeshTimer();
+      const timerB = new FakeMeshTimer();
+      const timerC = new FakeMeshTimer();
+      const transportA = new FakeMeshTransport();
+      const transportB = new FakeMeshTransport();
+      const transportC = new FakeMeshTransport();
+      const meshA = new PeerMeshOrchestrator(
+        new FakeTopologyProvider({ localDeviceId: 'device-a', peers: [PEER_B, PEER_C] }), transportA, timerA);
+      const meshB = new PeerMeshOrchestrator(
+        new FakeTopologyProvider({ localDeviceId: 'device-b', peers: [PEER_A, PEER_C] }), transportB, timerB);
+      const meshC = new PeerMeshOrchestrator(
+        new FakeTopologyProvider({ localDeviceId: 'device-c', peers: [PEER_A, PEER_B] }), transportC, timerC);
+
+      await Promise.all([meshA.reconcile(), meshB.reconcile(), meshC.reconcile()]);
+      expect(transportA.connectCalls).assertDeepEquals(['device-b']);
+      expect(transportB.connectCalls.length).assertEqual(0);
+      expect(transportC.connectCalls.length).assertEqual(0);
+
+      timerA.advance(12000); timerB.advance(12000); timerC.advance(12000);
+      await flushAsync();
+      expect(transportA.connectCalls).assertDeepEquals(['device-b', 'device-c']);
+      expect(transportB.connectCalls.length).assertEqual(0);
+      expect(transportC.connectCalls.length).assertEqual(0);
+
+      timerA.advance(12000); timerB.advance(12000); timerC.advance(12000);
+      await flushAsync();
+      expect(transportB.connectCalls).assertDeepEquals(['device-c']);
+    });
+
+    it('retriesOnlyInTheNextLegalSlotAfterBackoff', 0, async () => {
       const provider = new FakeTopologyProvider({ localDeviceId: 'device-a', peers: [PEER_B] });
       const transport = new FakeMeshTransport();
       const timer = new FakeMeshTimer();
-      transport.failNext('device-b', 5);
+      transport.failNext('device-b', 2);
       const mesh = new PeerMeshOrchestrator(provider, transport, timer);
 
       await mesh.reconcile();
-      expect(timer.scheduledDelays).assertDeepEquals([1000]);
-      timer.advance(1000); await flushAsync();
-      timer.advance(2000); await flushAsync();
-      timer.advance(4000); await flushAsync();
-      timer.advance(8000); await flushAsync();
-
-      expect(timer.scheduledDelays).assertDeepEquals([1000, 2000, 4000, 8000, 30000]);
+      expect(transport.connectCalls).assertDeepEquals(['device-b']);
+      timer.advance(23999); await flushAsync();
+      expect(transport.connectCalls).assertDeepEquals(['device-b']);
+      timer.advance(1); await flushAsync();
+      expect(transport.connectCalls).assertDeepEquals(['device-b', 'device-b']);
     });
 
-    it('retriesImmediatelyWhenLifecycleReconcilesDuringBackoff', 0, async () => {
+    it('keepsTheScheduledSlotWhenLifecycleReconciles', 0, async () => {
       const provider = new FakeTopologyProvider({ localDeviceId: 'device-b', peers: [PEER_A] });
       const transport = new FakeMeshTransport();
       const timer = new FakeMeshTimer();
       transport.failNext('device-a', 1);
       const mesh = new PeerMeshOrchestrator(provider, transport, timer);
       await mesh.reconcile();
-      timer.advance(3000);
+      timer.advance(12000);
       await flushAsync();
       expect(transport.connectCalls).assertDeepEquals(['device-a']);
       expect(timer.pendingCount()).assertEqual(1);
 
       await mesh.reconcile();
 
-      expect(timer.cancelledDelays).assertDeepEquals([1000]);
-      expect(transport.connectCalls).assertDeepEquals(['device-a', 'device-a']);
-      expect(timer.pendingCount()).assertEqual(0);
+      expect(timer.cancelledDelays.length).assertEqual(0);
+      expect(transport.connectCalls).assertDeepEquals(['device-a']);
+      expect(timer.pendingCount()).assertEqual(1);
     });
 
     it('removingOnePeerCancelsOnlyItsRetry', 0, async () => {
@@ -211,7 +239,7 @@ export default function peerMeshOrchestratorTest(): void {
       await mesh.reconcile();
 
       expect(timer.pendingCount()).assertEqual(1);
-      expect(timer.cancelledDelays).assertDeepEquals([1000]);
+      expect(timer.cancelledDelays.length).assertEqual(2);
       expect(transport.disconnectCalls).assertDeepEquals(['device-b']);
     });
 
@@ -273,7 +301,7 @@ export default function peerMeshOrchestratorTest(): void {
       expect(timer.pendingCount()).assertEqual(2);
 
       mesh.destroy();
-      timer.advance(3000);
+      timer.advance(12000);
       await flushAsync();
 
       expect(provider.stopCalls).assertEqual(1);

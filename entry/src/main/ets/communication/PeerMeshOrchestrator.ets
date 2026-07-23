@@ -1,11 +1,12 @@
 import { DeviceTopologyProvider, DeviceTopologySnapshot } from './DeviceTopologyProvider';
-import { MeshDialRole, planPeerRole } from './PeerMeshPlanner';
+import { MeshDialRole, planFullMeshEdges, planPeerRole } from './PeerMeshPlanner';
 import { PeerDevice } from '../model/AppModels';
 
-const INBOUND_GRACE_MS: number = 3000;
 const TOPOLOGY_DEBOUNCE_MS: number = 300;
 const READY_POLL_MS: number = 25;
 const RETRY_DELAYS_MS: number[] = [1000, 2000, 4000, 8000, 30000];
+const EDGE_SLOT_MS: number = 12000;
+const CONNECT_WINDOW_MS: number = 10000;
 
 export interface MeshTimer {
   after(delayMs: number, callback: () => void): number;
@@ -34,9 +35,11 @@ export type PeerMeshSnapshotObserver = (peers: PeerDevice[]) => void;
 
 interface PeerMeshState {
   peer: PeerDevice;
-  graceTimer: number | undefined;
   retryTimer: number | undefined;
   retryAttempt: number;
+  notBeforeMs: number;
+  edgeIndex: number;
+  edgeCount: number;
   connecting: boolean;
 }
 
@@ -62,6 +65,7 @@ export class PeerMeshOrchestrator implements PeerMeshController {
   private readonly snapshotObserver: PeerMeshSnapshotObserver | undefined;
   private readonly states = new Map<string, PeerMeshState>();
   private peers: PeerDevice[] = [];
+  private currentLocalDeviceId: string = '';
   private topologyTimer: number | undefined;
   private reconciling: Promise<void> | undefined;
   private reconcileAgain: boolean = false;
@@ -135,6 +139,7 @@ export class PeerMeshOrchestrator implements PeerMeshController {
     }
     this.states.clear();
     this.peers = [];
+    this.currentLocalDeviceId = '';
     for (const deviceId of deviceIds) {
       this.transport.disconnectPeer(deviceId).catch((): void => {});
     }
@@ -144,6 +149,7 @@ export class PeerMeshOrchestrator implements PeerMeshController {
     const snapshot: DeviceTopologySnapshot = await this.provider.snapshot();
     if (this.destroyed) return;
     const peers = this.uniqueSortedPeers(snapshot.peers, snapshot.localDeviceId);
+    this.currentLocalDeviceId = snapshot.localDeviceId;
     this.transport.setLocalDeviceId(snapshot.localDeviceId);
     await this.transport.registerPeers(peers);
     if (this.destroyed) return;
@@ -162,26 +168,29 @@ export class PeerMeshOrchestrator implements PeerMeshController {
     if (this.destroyed) return;
 
     this.peers = peers;
+    const allDeviceIds: string[] = [snapshot.localDeviceId];
+    for (const peer of peers) allDeviceIds.push(peer.deviceId);
+    const meshEdges = planFullMeshEdges(allDeviceIds);
     for (const peer of peers) {
       let state = this.states.get(peer.deviceId);
-      let retryImmediately: boolean = false;
       if (state === undefined) {
-        state = { peer: peer, graceTimer: undefined, retryTimer: undefined, retryAttempt: 0,
-          connecting: false };
+        state = { peer: peer, retryTimer: undefined, retryAttempt: 0, notBeforeMs: 0,
+          edgeIndex: -1, edgeCount: meshEdges.length, connecting: false };
         this.states.set(peer.deviceId, state);
       } else {
         state.peer = peer;
-        if (state.retryTimer !== undefined) {
-          this.timer.cancel(state.retryTimer);
-          state.retryTimer = undefined;
-          retryImmediately = true;
-        }
       }
-      if (retryImmediately) {
-        await this.attemptConnect(peer.deviceId);
-      } else {
-        await this.ensurePeer(snapshot.localDeviceId, state);
+      const edgeKey = snapshot.localDeviceId < peer.deviceId ?
+        snapshot.localDeviceId + '->' + peer.deviceId : peer.deviceId + '->' + snapshot.localDeviceId;
+      const edgeIndex = meshEdges.indexOf(edgeKey);
+      if (state.edgeIndex !== edgeIndex || state.edgeCount !== meshEdges.length) {
+        this.cancelStateTimers(state);
+        state.edgeIndex = edgeIndex;
+        state.edgeCount = meshEdges.length;
+        state.retryAttempt = 0;
+        state.notBeforeMs = 0;
       }
+      await this.ensurePeer(snapshot.localDeviceId, state);
     }
     this.publishPeerSnapshot();
   }
@@ -197,19 +206,8 @@ export class PeerMeshOrchestrator implements PeerMeshController {
       this.cancelStateTimers(state);
       return;
     }
-    if (role === MeshDialRole.PRIMARY_DIALER) {
-      this.cancelGrace(state);
-      if (!state.connecting && state.retryTimer === undefined) await this.attemptConnect(state.peer.deviceId);
-      return;
-    }
-    if (state.connecting || state.retryTimer !== undefined || state.graceTimer !== undefined) return;
-    const deviceId = state.peer.deviceId;
-    state.graceTimer = this.timer.after(INBOUND_GRACE_MS, (): void => {
-      const current = this.states.get(deviceId);
-      if (this.destroyed || current !== state) return;
-      state.graceTimer = undefined;
-      this.attemptConnect(deviceId).catch((): void => {});
-    });
+    if (state.connecting || state.retryTimer !== undefined) return;
+    await this.scheduleSlotAttempt(state, role);
   }
 
   private async attemptConnect(deviceId: string): Promise<void> {
@@ -232,18 +230,46 @@ export class PeerMeshOrchestrator implements PeerMeshController {
       if (!this.transport.isReady(deviceId)) throw new Error('E_PEER_NOT_READY');
       this.cancelStateTimers(state);
       state.retryAttempt = 0;
+      state.notBeforeMs = 0;
     } catch (_) {
-      if (!this.destroyed && this.states.get(deviceId) === state) this.scheduleRetry(state);
+      if (!this.destroyed && this.states.get(deviceId) === state) {
+        const index = Math.min(state.retryAttempt, RETRY_DELAYS_MS.length - 1);
+        state.notBeforeMs = this.timer.now() + RETRY_DELAYS_MS[index];
+        state.retryAttempt += 1;
+      }
     } finally {
       if (this.states.get(deviceId) === state) state.connecting = false;
     }
+    if (!this.destroyed && this.states.get(deviceId) === state && !this.transport.isReady(deviceId)) {
+      const role = planPeerRole(this.currentLocalDeviceId, deviceId);
+      if (role !== MeshDialRole.INVALID_SELF) await this.scheduleSlotAttempt(state, role);
+    }
   }
 
-  private scheduleRetry(state: PeerMeshState): void {
-    if (this.destroyed || state.retryTimer !== undefined) return;
-    const index = Math.min(state.retryAttempt, RETRY_DELAYS_MS.length - 1);
-    const delayMs = RETRY_DELAYS_MS[index];
-    state.retryAttempt += 1;
+  private async scheduleSlotAttempt(state: PeerMeshState, role: MeshDialRole): Promise<void> {
+    if (this.destroyed || state.retryTimer !== undefined || state.edgeIndex < 0 || state.edgeCount < 1) return;
+    const now = this.timer.now();
+    const currentSlot = Math.floor(now / EDGE_SLOT_MS);
+    const desiredCycleParity = role === MeshDialRole.PRIMARY_DIALER ? 0 : 1;
+    let targetMs = -1;
+    const searchSlots = state.edgeCount * 4 + 1;
+    for (let offset = 0; offset < searchSlots; offset += 1) {
+      const slot = currentSlot + offset;
+      if (slot % state.edgeCount !== state.edgeIndex) continue;
+      const cycle = Math.floor(slot / state.edgeCount);
+      if (cycle % 2 !== desiredCycleParity) continue;
+      const slotStartMs = slot * EDGE_SLOT_MS;
+      const slotEndMs = slotStartMs + EDGE_SLOT_MS;
+      if (slotStartMs < state.notBeforeMs || slotEndMs - now < CONNECT_WINDOW_MS) continue;
+      targetMs = Math.max(now, slotStartMs);
+      break;
+    }
+    if (targetMs < 0) return;
+    const delayMs = targetMs - now;
+    if (delayMs === 0) {
+      await this.attemptConnect(state.peer.deviceId);
+      return;
+    }
     const deviceId = state.peer.deviceId;
     state.retryTimer = this.timer.after(delayMs, (): void => {
       const current = this.states.get(deviceId);
@@ -266,7 +292,7 @@ export class PeerMeshOrchestrator implements PeerMeshController {
   private hasPendingConnections(): boolean {
     for (const state of this.states.values()) {
       if (this.transport.isReady(state.peer.deviceId)) continue;
-      if (state.connecting || state.graceTimer !== undefined || state.retryTimer !== undefined) return true;
+      if (state.connecting || state.retryTimer !== undefined) return true;
     }
     return false;
   }
@@ -286,17 +312,9 @@ export class PeerMeshOrchestrator implements PeerMeshController {
   }
 
   private cancelStateTimers(state: PeerMeshState): void {
-    this.cancelGrace(state);
     if (state.retryTimer !== undefined) {
       this.timer.cancel(state.retryTimer);
       state.retryTimer = undefined;
-    }
-  }
-
-  private cancelGrace(state: PeerMeshState): void {
-    if (state.graceTimer !== undefined) {
-      this.timer.cancel(state.graceTimer);
-      state.graceTimer = undefined;
     }
   }
 

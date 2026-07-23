@@ -4,7 +4,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { AppError, ErrorStage } from '../../common/AppError';
 import { Logger } from '../../common/Logger';
 import { PeerDevice } from '../../model/AppModels';
-import { CollaborationApi, ProductionCollaborationApi, SessionEventInfo } from './CollaborationApi';
+import { CollaborationApi, ProductionCollaborationApi, SessionConnectResult, SessionEventInfo } from './CollaborationApi';
 import { ControlCodec, utf8ByteLength } from './ControlCodec';
 import { ControlEnvelope, ControlChannelState } from './ControlModels';
 import { DskDataTransport } from './DskDataChannel';
@@ -18,6 +18,7 @@ const CHANNEL_KEY = 'semalink.channel';
 const CHANNEL_VALUE = 'DSK_DATA';
 const SEND_READY_TIMEOUT_MS = 3000;
 const SEND_READY_POLL_MS = 25;
+const CONNECT_TIMEOUT_MS = 9000;
 export interface DskControlHubListener { onControlReady(deviceId: string): void; onControlMessage(deviceId: string, envelope: ControlEnvelope): void; onControlClosed(deviceId: string, error?: AppError): void; }
 export type DskDataMessageHandler = (deviceId: string, frame: Object) => void;
 export type SessionDirection = 'INBOUND' | 'OUTBOUND';
@@ -55,7 +56,7 @@ export class DskControlHub implements DskDataTransport {
     let id: number; try { id = this.api.create(SERVICE, this.context, info, options); } catch (_) { throw new AppError('E_CONNECT_FAILED', 'connection session creation failed', ErrorStage.CONNECTION, true); } const session: Session = { device: peer, id, state: 'CONNECTING', direction: 'OUTBOUND', createdOrder: this.createdOrder++ };
     const list = this.sessionsByDevice.get(peer.deviceId) ?? []; list.push(session); this.sessionsByDevice.set(peer.deviceId, list); this.deviceBySession.set(id, peer.deviceId); this.bind(session);
     try {
-      const result = await this.api.connect(id);
+      const result = await this.connectWithinDeadline(id);
       if (!result.isConnected) {
         const reason = result.reason ?? 'connection rejected';
         const error = new AppError('E_CONNECT_REJECTED', reason, ErrorStage.CONNECTION, true, result.errorCode);
@@ -166,6 +167,30 @@ export class DskControlHub implements DskDataTransport {
       await new Promise<void>((resolve) => setTimeout(resolve, SEND_READY_POLL_MS));
     }
     return this.canonical(deviceId);
+  }
+  private connectWithinDeadline(id: number): Promise<SessionConnectResult> {
+    return new Promise<SessionConnectResult>((resolve, reject) => {
+      let completed: boolean = false;
+      const timer = setTimeout((): void => {
+        if (completed) return;
+        completed = true;
+        const error = new AppError('E_CONNECT_TIMEOUT', 'connection handshake timed out',
+          ErrorStage.CONNECTION, true);
+        this.fail(id, error);
+        reject(error);
+      }, CONNECT_TIMEOUT_MS);
+      this.api.connect(id).then((result: SessionConnectResult): void => {
+        if (completed) return;
+        completed = true;
+        clearTimeout(timer);
+        resolve(result);
+      }).catch((error: Error): void => {
+        if (completed) return;
+        completed = true;
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
   }
   private message(id: number, text: string): void { const d = this.deviceBySession.get(id); if (d === undefined) return; const s = (this.sessionsByDevice.get(d) ?? []).find((x: Session) => x.id === id); if (s === undefined) return; try { const parsed = JSON.parse(text) as Object; if (parsed !== null && typeof parsed === 'object' && (parsed as Record<string, Object>)['channel'] === 'DATA') { this.logger.info('DSK_DATA_FRAME_RECEIVED', 'device=' + d.slice(-4)); this.dataHandlers.forEach((handler: DskDataMessageHandler): void => handler(d, parsed)); return; } const e = this.codec.decode(text); if (this.isDuplicate(d, e.messageId)) return; this.listener?.onControlMessage(d, e); } catch (_) { this.fail(id, new AppError('E_CONTROL_INVALID', 'invalid control message', ErrorStage.PROTOCOL, false)); } }
   private closed(id: number, info: SessionEventInfo): void { const d = this.deviceBySession.get(id); if (d === undefined) return; this.fail(id, new AppError('E_SESSION_CLOSED', 'session closed', ErrorStage.CONNECTION, true, info.reason)); }

@@ -6,6 +6,7 @@ import {
 } from '../main/ets/communication/PeerConnectionPool';
 import { PeerDevice } from '../main/ets/model/AppModels';
 import { DskDataTransport } from '../main/ets/communication/control/DskDataChannel';
+import { DataBindPayload } from '../main/ets/communication/control/ControlModels';
 
 const PEER_B: PeerDevice = { deviceId: 'remote-b', deviceName: 'B', deviceType: 'phone' };
 const PEER_C: PeerDevice = { deviceId: 'remote-c', deviceName: 'C', deviceType: 'phone' };
@@ -17,6 +18,12 @@ class Hub implements DskDataTransport {
   async sendData(_deviceId: string, frame: Object): Promise<void> { this.sent.push(frame); }
 }
 class FixedTokenGenerator implements BindingTokenGenerator { async generate(): Promise<string> { return 'token'; } }
+class DelayedTokenGenerator implements BindingTokenGenerator {
+  async generate(): Promise<string> {
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    return 'token';
+  }
+}
 interface BindPayload { endpointVersion: number; sessionEpoch: string; bindingToken: string; }
 interface BindEnvelope { type: string; payload: BindPayload; }
 interface DataFrame { channel: string; version: string; frameId: string; index: number; total: number; textLength: number; payload: string; }
@@ -70,6 +77,36 @@ export default function peerConnectionPoolTest(): void {
       expect(changes[0]).assertEqual('remote-b:BINDING');
       expect(changes[1]).assertEqual('remote-b:READY');
       expect(changes[2]).assertEqual('remote-b:DISCONNECTED');
+    });
+
+    it('acceptsAuthenticatedInboundBindingDuringSimultaneousOutboundBinding', 0, async () => {
+      const hub = new Hub();
+      const pool = new PeerConnectionPool(hub, undefined, new DelayedTokenGenerator());
+      await pool.refreshPeers([PEER_B]);
+      const outboundBinding = pool.beginBinding('remote-b');
+      const inbound: DataBindPayload = {
+        deviceId: 'local-a',
+        controlSessionId: 'local-a',
+        endpointVersion: 1,
+        sessionEpoch: 'remote-token',
+        bindingToken: 'remote-token'
+      };
+
+      expect(await pool.acceptBinding(inbound, 'remote-b')).assertTrue();
+      expect(await outboundBinding).assertTrue();
+      expect(pool.stateOf('remote-b')).assertEqual('READY');
+      await pool.destroy();
+    });
+
+    it('rejectsMalformedInboundBindingWithoutChangingState', 0, async () => {
+      const pool = new PeerConnectionPool(new Hub());
+      await pool.refreshPeers([PEER_B]);
+      const malformed = { deviceId: '', controlSessionId: '', endpointVersion: 0,
+        sessionEpoch: '', bindingToken: '' } as DataBindPayload;
+
+      expect(await pool.acceptBinding(malformed, 'remote-b')).assertFalse();
+      expect(pool.stateOf('remote-b')).assertEqual('DISCONNECTED');
+      await pool.destroy();
     });
   });
 }

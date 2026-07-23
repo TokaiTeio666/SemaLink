@@ -1,0 +1,93 @@
+<h2>全互联控制通道：建链方案</h2>
+<p class="subtitle">三台设备只是示例；每条线都是双向可用的控制通道，没有固定中心。</p>
+
+<div class="cards">
+  <div class="card" data-choice="deterministic" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <svg viewBox="0 0 360 190" role="img" aria-label="设备 A、B、C 之间各有一条双向控制通道">
+        <defs>
+          <marker id="arrow-a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 Z" fill="var(--viz-series-1)"></path>
+          </marker>
+        </defs>
+        <g fill="none" stroke="var(--viz-series-1)" stroke-width="3" marker-start="url(#arrow-a)" marker-end="url(#arrow-a)">
+          <path d="M92 136 L268 136"></path>
+          <path d="M102 122 L166 57"></path>
+          <path d="M258 122 L194 57"></path>
+        </g>
+        <g fill="var(--card)" stroke="var(--border)" stroke-width="2">
+          <circle cx="180" cy="42" r="30"></circle>
+          <circle cx="78" cy="145" r="30"></circle>
+          <circle cx="282" cy="145" r="30"></circle>
+        </g>
+        <g fill="var(--foreground)" text-anchor="middle" font-weight="500">
+          <text x="180" y="47">A</text><text x="78" y="150">B</text><text x="282" y="150">C</text>
+        </g>
+      </svg>
+    </div>
+    <div class="card-body">
+      <h3>A · 确定性单边建链（推荐）</h3>
+      <p>双方都发现对方，但按稳定 deviceId 排序，只由一端主动拨号；通道建成后双方都可发起查询。等待端超时后可兜底拨号。</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>优点</h4><ul><li>每对设备只保留一条会话</li><li>状态清晰，改动集中</li><li>断线重连无中心依赖</li></ul></div>
+        <div class="cons"><h4>代价</h4><ul><li>需要建链所有权与等待超时规则</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="symmetric" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <svg viewBox="0 0 360 190" role="img" aria-label="设备 A、B、C 之间可能短暂存在重复连接">
+        <defs>
+          <marker id="arrow-b" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse">
+            <path d="M0,0 L8,4 L0,8 Z" fill="var(--viz-series-2)"></path>
+          </marker>
+        </defs>
+        <g fill="none" stroke="var(--viz-series-2)" stroke-width="2.5" marker-end="url(#arrow-b)">
+          <path d="M92 132 Q180 108 268 132"></path><path d="M268 148 Q180 172 92 148"></path>
+          <path d="M101 124 Q113 72 163 51"></path><path d="M171 68 Q123 90 91 130"></path>
+          <path d="M197 51 Q247 72 259 124"></path><path d="M269 130 Q237 90 189 68"></path>
+        </g>
+        <g fill="var(--card)" stroke="var(--border)" stroke-width="2">
+          <circle cx="180" cy="42" r="30"></circle><circle cx="78" cy="145" r="30"></circle><circle cx="282" cy="145" r="30"></circle>
+        </g>
+        <g fill="var(--foreground)" text-anchor="middle" font-weight="500">
+          <text x="180" y="47">A</text><text x="78" y="150">B</text><text x="282" y="150">C</text>
+        </g>
+      </svg>
+    </div>
+    <div class="card-body">
+      <h3>B · 双边同时拨号后去重</h3>
+      <p>每台设备都主动连接所有可信设备；发生双向重复会话后，再通过会话优先级选出唯一通道并关闭另一条。</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>优点</h4><ul><li>上线连接速度快</li><li>不依赖双方看到完全一致的目录</li></ul></div>
+        <div class="cons"><h4>代价</h4><ul><li>并发去重与消息迁移复杂</li><li>易产生短暂状态抖动</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="ondemand" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <svg viewBox="0 0 360 190" role="img" aria-label="设备平时只维护发现关系，查询时才建立通道">
+        <g fill="none" stroke="var(--border)" stroke-width="2" stroke-dasharray="7 6">
+          <path d="M92 136 L268 136"></path><path d="M102 122 L166 57"></path><path d="M258 122 L194 57"></path>
+        </g>
+        <path d="M102 122 L166 57" fill="none" stroke="var(--viz-series-3)" stroke-width="4"></path>
+        <g fill="var(--card)" stroke="var(--border)" stroke-width="2">
+          <circle cx="180" cy="42" r="30"></circle><circle cx="78" cy="145" r="30"></circle><circle cx="282" cy="145" r="30"></circle>
+        </g>
+        <g fill="var(--foreground)" text-anchor="middle" font-weight="500">
+          <text x="180" y="47">A</text><text x="78" y="150">B</text><text x="282" y="150">C</text>
+        </g>
+      </svg>
+    </div>
+    <div class="card-body">
+      <h3>C · 查询时按需建链</h3>
+      <p>平时只发现设备，某台设备发起查询时才连接其他节点；查询完成后可释放通道。</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>优点</h4><ul><li>空闲资源占用最低</li></ul></div>
+        <div class="cons"><h4>代价</h4><ul><li>首查延迟高</li><li>不满足“进入前台后自动全连”的目标</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>

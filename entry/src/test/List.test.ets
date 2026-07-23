@@ -41,6 +41,7 @@ import peerMeshPlannerTest from './PeerMeshPlanner.test';
 import deviceTopologyProviderTest from './DeviceTopologyProvider.test';
 import dskControlHubTest from './DskControlHub.test';
 import task3TlsCoordinatorTest from './Task3TlsCoordinator.test';
+import peerMeshOrchestratorTest from './PeerMeshOrchestrator.test';
 
 export default function testsuite(): void {
   commonModelsTest();
@@ -86,4 +87,5 @@ export default function testsuite(): void {
   deviceTopologyProviderTest();
   dskControlHubTest();
   task3TlsCoordinatorTest();
+  peerMeshOrchestratorTest();
 }

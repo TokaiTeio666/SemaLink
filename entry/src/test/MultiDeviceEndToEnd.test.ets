@@ -17,10 +17,27 @@ function evidence(id: string, concept: string, hash: string = 'hash-' + id): Evi
 
 export default function multiDeviceEndToEndTest(): void {
   describe('MultiDeviceEndToEnd', () => {
-    it('connectsAWithBothRemoteDevices', 0, async () => {
+    it('connectsEveryPairInTheThreeDeviceMesh', 0, async () => {
       const fixture = new MultiDeviceFixture();
-      await fixture.connectThreeDevices();
+      await fixture.connectFullMesh();
       expect(fixture.readyDeviceIds()).assertDeepEquals(['device-b', 'device-c']);
+      expect(fixture.readyPeersOf('device-b')).assertDeepEquals(['device-a', 'device-c']);
+      expect(fixture.readyPeersOf('device-c')).assertDeepEquals(['device-a', 'device-b']);
+    });
+
+    it('allowsEveryDeviceToQueryTheOtherTwo', 0, async () => {
+      const fixture = new MultiDeviceFixture();
+      fixture.setEvidence('device-a', [evidence('a-alpha', 'alpha')]);
+      fixture.setEvidence('device-b', [evidence('b-beta', 'beta')]);
+      fixture.setEvidence('device-c', [evidence('c-gamma', 'gamma')]);
+      await fixture.connectFullMesh();
+
+      expect((await fixture.runTaskFrom('device-a', makeTask('from-a'))).feedback).assertEqual('ENOUGH');
+      expect(fixture.lastAggregate().evidence.length).assertEqual(3);
+      expect((await fixture.runTaskFrom('device-b', makeTask('from-b'))).feedback).assertEqual('ENOUGH');
+      expect(fixture.lastAggregate().evidence.length).assertEqual(3);
+      expect((await fixture.runTaskFrom('device-c', makeTask('from-c'))).feedback).assertEqual('ENOUGH');
+      expect(fixture.lastAggregate().evidence.length).assertEqual(3);
     });
 
     it('mergesComplementaryEvidenceAndKeepsEvidenceOffDsk', 0, async () => {
@@ -63,6 +80,48 @@ export default function multiDeviceEndToEndTest(): void {
       const result = await fixture.runTask(makeTask('empty-c'));
       expect(result.feedback).assertEqual('ABORT');
       expect(fixture.pendingResourceCount()).assertEqual(0);
+    });
+
+    it('keepsTheRemainingPairQueryableWhenOneDeviceLeaves', 0, async () => {
+      const fixture = new MultiDeviceFixture();
+      fixture.setEvidence('device-a', [evidence('a-alpha', 'alpha')]);
+      fixture.setEvidence('device-b', [evidence('b-beta', 'beta')]);
+      await fixture.connectFullMesh();
+      fixture.disconnect('device-c');
+
+      expect(fixture.readyPeersOf('device-a')).assertDeepEquals(['device-b']);
+      expect(fixture.readyPeersOf('device-b')).assertDeepEquals(['device-a']);
+      expect((await fixture.runTaskFrom('device-a', makeTask('without-c'))).feedback).assertEqual('ENOUGH');
+    });
+
+    it('convergesBackupConnectionsToOnePerUnorderedPair', 0, async () => {
+      const fixture = new MultiDeviceFixture();
+      await fixture.connectFullMesh();
+      fixture.injectBackupConnection('device-b', 'device-a');
+      fixture.injectBackupConnection('device-c', 'device-a');
+      fixture.injectBackupConnection('device-c', 'device-b');
+      fixture.convergeDuplicateConnections();
+
+      expect(fixture.connectionCount('device-a', 'device-b')).assertEqual(1);
+      expect(fixture.connectionCount('device-a', 'device-c')).assertEqual(1);
+      expect(fixture.connectionCount('device-b', 'device-c')).assertEqual(1);
+      expect(fixture.connectionDirection('device-a', 'device-b')).assertEqual('OUTBOUND');
+      expect(fixture.connectionDirection('device-b', 'device-a')).assertEqual('INBOUND');
+    });
+
+    it('reconnectsOnlyEdgesThatBelongToTheReturningDevice', 0, async () => {
+      const fixture = new MultiDeviceFixture();
+      await fixture.connectFullMesh();
+      const abAttempts: number = fixture.connectionAttemptCount('device-a', 'device-b');
+      const acAttempts: number = fixture.connectionAttemptCount('device-a', 'device-c');
+      const bcAttempts: number = fixture.connectionAttemptCount('device-b', 'device-c');
+      fixture.disconnect('device-c');
+      await fixture.connectFullMesh();
+
+      expect(fixture.connectionAttemptCount('device-a', 'device-b')).assertEqual(abAttempts);
+      expect(fixture.connectionAttemptCount('device-a', 'device-c')).assertEqual(acAttempts + 1);
+      expect(fixture.connectionAttemptCount('device-b', 'device-c')).assertEqual(bcAttempts + 1);
+      expect(fixture.readyPeersOf('device-c')).assertDeepEquals(['device-a', 'device-b']);
     });
 
     it('ignoresLateFramesAfterCancellation', 0, async () => {

@@ -42,6 +42,7 @@ import deviceTopologyProviderTest from './DeviceTopologyProvider.test';
 import dskControlHubTest from './DskControlHub.test';
 import task3TlsCoordinatorTest from './Task3TlsCoordinator.test';
 import peerMeshOrchestratorTest from './PeerMeshOrchestrator.test';
+import multiDeviceEndToEndTest from './MultiDeviceEndToEnd.test';
 
 export default function testsuite(): void {
   commonModelsTest();
@@ -88,4 +89,5 @@ export default function testsuite(): void {
   dskControlHubTest();
   task3TlsCoordinatorTest();
   peerMeshOrchestratorTest();
+  multiDeviceEndToEndTest();
 }

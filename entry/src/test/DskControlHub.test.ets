@@ -129,6 +129,58 @@ export default function dskControlHubTest(): void {
 
       expect(messages.length).assertEqual(1);
     });
+    it('prefersOutboundForTheLexicallySmallerDevice', 0, async () => {
+      const api = new FakeApi();
+      const hub = new DskControlHub({} as common.UIAbilityContext, 'b', new Logger(), api,
+        undefined, 'device-a');
+
+      await hub.connect(peer('device-b'));
+      expect(hub.accept(acceptWant('device-b'))).assertTrue();
+      api.emitConnect(2);
+
+      expect(hub.canonicalSessionDirection('device-b')).assertEqual('OUTBOUND');
+      expect(api.disconnects.length).assertEqual(1);
+    });
+    it('prefersInboundForTheLexicallyLargerDevice', 0, async () => {
+      const api = new FakeApi();
+      const hub = new DskControlHub({} as common.UIAbilityContext, 'b', new Logger(), api,
+        undefined, 'device-b');
+
+      await hub.connect(peer('device-a'));
+      expect(hub.accept(acceptWant('device-a'))).assertTrue();
+      api.emitConnect(2);
+
+      expect(hub.canonicalSessionDirection('device-a')).assertEqual('INBOUND');
+      expect(api.disconnects.length).assertEqual(1);
+    });
+    it('doesNotCloseADeviceWhenOnlyItsBackupSessionFails', 0, async () => {
+      const api = new FakeApi();
+      const closed: string[] = [];
+      const hub = new DskControlHub({} as common.UIAbilityContext, 'b', new Logger(), api,
+        new TestListener((_id: string): void => {}, (id: string): void => { closed.push(id); }), 'device-a');
+
+      await hub.connect(peer('device-b'));
+      expect(hub.accept(acceptWant('device-b'))).assertTrue();
+      api.emitDisconnect(2, 1001);
+
+      expect(hub.stateOf('device-b')).assertEqual('READY');
+      expect(closed.length).assertEqual(0);
+    });
+    it('deduplicatesControlMessagesAcrossTemporarySessions', 0, async () => {
+      const api = new FakeApi();
+      const messages: string[] = [];
+      const hub = new DskControlHub({} as common.UIAbilityContext, 'b', new Logger(), api,
+        new TestListener((id: string): void => { messages.push(id); }), 'device-a');
+      const envelope: ControlEnvelope = close('cross-session-message');
+
+      await hub.connect(peer('device-b'));
+      expect(hub.accept(acceptWant('device-b'))).assertTrue();
+      const encoded = new ControlCodec().encode(envelope);
+      api.emitMessage(1, encoded);
+      api.emitMessage(2, encoded);
+
+      expect(messages.length).assertEqual(1);
+    });
     it('rejectsOversizedControlEnvelopeWithStableCode', 0, () => {
       const codec = new ControlCodec();
       let code = '';

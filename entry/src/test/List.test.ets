@@ -39,6 +39,7 @@ import semaLinkAgentTest from './SemaLinkAgent.test';
 import peerStatusProjectionTest from './PeerStatusProjection.test';
 import peerMeshPlannerTest from './PeerMeshPlanner.test';
 import deviceTopologyProviderTest from './DeviceTopologyProvider.test';
+import dskControlHubTest from './DskControlHub.test';
 
 export default function testsuite(): void {
   commonModelsTest();
@@ -82,4 +83,5 @@ export default function testsuite(): void {
   peerStatusProjectionTest();
   peerMeshPlannerTest();
   deviceTopologyProviderTest();
+  dskControlHubTest();
 }

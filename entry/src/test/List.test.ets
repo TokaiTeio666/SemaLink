@@ -36,6 +36,7 @@ import rdbSearchCapabilityProviderTest from './RdbSearchCapabilityProvider.test'
 import collaborationRecordStateTest from './CollaborationRecordState.test';
 import progressiveQueryCoordinatorTest from './ProgressiveQueryCoordinator.test';
 import semaLinkAgentTest from './SemaLinkAgent.test';
+import peerStatusProjectionTest from './PeerStatusProjection.test';
 
 export default function testsuite(): void {
   commonModelsTest();
@@ -76,4 +77,5 @@ export default function testsuite(): void {
   collaborationRecordStateTest();
   progressiveQueryCoordinatorTest();
   semaLinkAgentTest();
+  peerStatusProjectionTest();
 }

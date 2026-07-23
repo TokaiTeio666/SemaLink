@@ -199,9 +199,13 @@ export class CollaborationTransport implements Transport {
     const collabParam = rawCollabParam as Record<string, Object>;
     this.logger.info('COLLAB_INNER_PARAM_FOUND', '');
 
-    const rawPeer = collabParam[COLLAB_PEER_KEY];
-    const rawOptions = collabParam[COLLAB_OPTION_KEY];
-    const rawToken = collabParam[COLLAB_TOKEN_KEY];
+    const rawPeer = collabParam[COLLAB_PEER_KEY] ??
+      collabParam[abilityConnectionManager.CollaborationKeys.PEER_INFO];
+    const rawOptions = collabParam[COLLAB_OPTION_KEY] ??
+      collabParam[abilityConnectionManager.CollaborationKeys.CONNECT_OPTIONS];
+    const rawToken = collabParam[COLLAB_TOKEN_KEY] ??
+      collabParam['ohos.collaboration.key.token'] ??
+      collabParam['ohos.collaboration.key.collaborationToken'];
     const hasPeerInfo: boolean = rawPeer !== undefined && rawPeer !== null && typeof rawPeer === 'object';
     const hasConnectOptions: boolean = rawOptions !== undefined && rawOptions !== null &&
       typeof rawOptions === 'object';

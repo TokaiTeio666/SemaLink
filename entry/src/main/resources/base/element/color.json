@@ -17,6 +17,14 @@
       "value": "#EEF2F6"
     },
     {
+      "name": "border",
+      "value": "#E7ECF2"
+    },
+    {
+      "name": "chip_background",
+      "value": "#EEF5FF"
+    },
+    {
       "name": "accent",
       "value": "#1769AA"
     },
@@ -35,6 +43,10 @@
     {
       "name": "status_success",
       "value": "#18794E"
+    },
+    {
+      "name": "status_warning",
+      "value": "#F57C00"
     },
     {
       "name": "error_surface",

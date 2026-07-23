@@ -24,5 +24,25 @@ export default function dskDataChannelTest(): void {
       }
       expect(received).assertEqual(text);
     });
+
+    it('keeps multiple listeners and can remove one listener', 0, async () => {
+      const fakeHub = new TestHub();
+      const channel = new DskDataChannel(fakeHub);
+      let first = 0;
+      let second = 0;
+      const firstHandler = (_text: string): void => { first += 1; };
+      const secondHandler = (_text: string): void => { second += 1; };
+      channel.onMessage('peer', firstHandler);
+      channel.addMessageListener('peer', secondHandler);
+      await channel.send('peer', 'hello');
+      fakeHub.handler?.('peer', fakeHub.sent[0]);
+      expect(first).assertEqual(1);
+      expect(second).assertEqual(1);
+      channel.removeMessageListener('peer', secondHandler);
+      await channel.send('peer', 'world');
+      fakeHub.handler?.('peer', fakeHub.sent[1]);
+      expect(first).assertEqual(2);
+      expect(second).assertEqual(1);
+    });
   });
 }

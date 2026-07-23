@@ -1,4 +1,7 @@
 const MAX_FRAME_BYTES: number = 900;
+const MAX_FRAME_COUNT: number = 64;
+const MAX_REASSEMBLED_TEXT_BYTES: number = 256 * 1024;
+const FRAME_ASSEMBLY_TTL_MS: number = 10000;
 
 export interface DskDataFrame {
   channel: 'DATA';
@@ -36,8 +39,9 @@ function isFrame(value: Object): boolean {
 
 export class DskDataChannel {
   private readonly hub: DskDataTransport;
-  private readonly handlers = new Map<string, DskDataHandler>();
+  private readonly handlers = new Map<string, Set<(text: string) => void>>();
   private readonly pending = new Map<string, Map<string, DskDataFrame[]>>();
+  private readonly pendingAt = new Map<string, Map<string, number>>();
 
   constructor(hub: DskDataTransport) {
     this.hub = hub;
@@ -45,7 +49,38 @@ export class DskDataChannel {
   }
 
   onMessage(deviceId: string, handler: (text: string) => void): void {
-    this.handlers.set(deviceId, (_id: string, text: string): void => handler(text));
+    const listeners = new Set<(text: string) => void>();
+    listeners.add(handler);
+    this.handlers.set(deviceId, listeners);
+  }
+
+  addMessageListener(deviceId: string, handler: (text: string) => void): void {
+    let listeners = this.handlers.get(deviceId);
+    if (listeners === undefined) {
+      listeners = new Set<(text: string) => void>();
+      this.handlers.set(deviceId, listeners);
+    }
+    listeners.add(handler);
+  }
+
+  removeMessageListener(deviceId: string, handler: (text: string) => void): void {
+    const listeners = this.handlers.get(deviceId);
+    if (listeners === undefined) return;
+    listeners.delete(handler);
+    if (listeners.size === 0) this.handlers.delete(deviceId);
+  }
+
+  pendingFrameCount(deviceId?: string): number {
+    if (deviceId !== undefined) return this.pending.get(deviceId)?.size ?? 0;
+    let count = 0;
+    for (const frames of this.pending.values()) count += frames.size;
+    return count;
+  }
+
+  clearDevice(deviceId: string): void {
+    this.handlers.delete(deviceId);
+    this.pending.delete(deviceId);
+    this.pendingAt.delete(deviceId);
   }
 
   async send(deviceId: string, text: string): Promise<void> {
@@ -71,19 +106,39 @@ export class DskDataChannel {
   }
 
   private receive(deviceId: string, frameObject: Object): void {
+    this.pruneExpired(deviceId);
     if (!isFrame(frameObject)) return;
+    const incoming = frameObject as DskDataFrame;
+    if (incoming.total > MAX_FRAME_COUNT || incoming.textLength > MAX_REASSEMBLED_TEXT_BYTES) return;
     let byFrame = this.pending.get(deviceId);
+    let created = this.pendingAt.get(deviceId);
     if (byFrame === undefined) { byFrame = new Map<string, DskDataFrame[]>(); this.pending.set(deviceId, byFrame); }
-    const frame = frameObject as DskDataFrame;
+    if (created === undefined) { created = new Map<string, number>(); this.pendingAt.set(deviceId, created); }
+    const frame = incoming;
     let frames = byFrame.get(frame.frameId);
-    if (frames === undefined) { frames = []; byFrame.set(frame.frameId, frames); }
+    if (frames === undefined) { frames = []; byFrame.set(frame.frameId, frames); created.set(frame.frameId, Date.now()); }
+    if (frames.length > 0 && frames[0].total !== frame.total) { byFrame.delete(frame.frameId); created.delete(frame.frameId); return; }
     if (frames.some((item: DskDataFrame): boolean => item.index === frame.index)) return;
     frames.push(frame);
     if (frames.length !== frame.total) return;
     frames.sort((left: DskDataFrame, right: DskDataFrame): number => left.index - right.index);
     const text = frames.map((item: DskDataFrame): string => item.payload).join('');
     byFrame.delete(frame.frameId);
+    created.delete(frame.frameId);
     if (text.length !== frame.textLength) return;
-    this.handlers.get(deviceId)?.(deviceId, text);
+    for (const handler of this.handlers.get(deviceId) ?? new Set<(text: string) => void>()) handler(text);
+  }
+
+  private pruneExpired(deviceId: string): void {
+    const byFrame = this.pending.get(deviceId);
+    const created = this.pendingAt.get(deviceId);
+    if (byFrame === undefined || created === undefined) return;
+    const now = Date.now();
+    for (const frameId of created.keys()) {
+      if (now - (created.get(frameId) ?? now) > FRAME_ASSEMBLY_TTL_MS) {
+        created.delete(frameId);
+        byFrame.delete(frameId);
+      }
+    }
   }
 }

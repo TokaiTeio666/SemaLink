@@ -12,6 +12,8 @@ import { DskDataTransport } from './DskDataChannel';
 const SERVICE = 'semalink.dsk.data.v1';
 const MODULE = 'entry'; const ABILITY = 'EntryAbility';
 const KEY = 'ohos.extra.param.key.supportCollaborateIndex';
+const PEER_INFO_KEY = abilityConnectionManager.CollaborationKeys.PEER_INFO;
+const CONNECT_OPTIONS_KEY = abilityConnectionManager.CollaborationKeys.CONNECT_OPTIONS;
 const CHANNEL_KEY = 'semalink.channel';
 const CHANNEL_VALUE = 'DSK_DATA';
 const SEND_READY_TIMEOUT_MS = 3000;
@@ -34,11 +36,67 @@ export class DskControlHub implements DskDataTransport {
     const options: abilityConnectionManager.ConnectOptions = { needSendData: true, startOptions: abilityConnectionManager.StartOptionParams.START_IN_FOREGROUND, parameters: parameters };
     let id: number; try { id = this.api.create(SERVICE, this.context, info, options); } catch (_) { throw new AppError('E_CONNECT_FAILED', 'connection session creation failed', ErrorStage.CONNECTION, true); } const session: Session = { device: peer, id, state: 'CONNECTING', seen: new Set<string>() };
     const list = this.sessionsByDevice.get(peer.deviceId) ?? []; list.push(session); this.sessionsByDevice.set(peer.deviceId, list); this.deviceBySession.set(id, peer.deviceId); this.bind(session);
-    try { const result = await this.api.connect(id); if (!result.isConnected) { const error = new AppError('E_CONNECT_REJECTED', result.reason ?? 'connection rejected', ErrorStage.CONNECTION, true, result.errorCode); this.fail(id, error); throw error; } this.ready(id); } catch (e) { const error = e instanceof AppError ? e : new AppError('E_CONNECT_FAILED', 'connection failed', ErrorStage.CONNECTION, true); this.fail(id, error); throw error; }
+    try {
+      const result = await this.api.connect(id);
+      if (!result.isConnected) {
+        const reason = result.reason ?? 'connection rejected';
+        const error = new AppError('E_CONNECT_REJECTED', reason, ErrorStage.CONNECTION, true, result.errorCode);
+        this.logger.error('DSK_CONNECT_REJECTED', 'device=' + peer.deviceId.slice(-4) +
+          ' code=' + (result.errorCode ?? -1).toString() + ' reason=' + reason);
+        this.fail(id, error);
+        throw error;
+      }
+      this.ready(id);
+    } catch (e) {
+      const businessError = e as BusinessError;
+      const error = e instanceof AppError ? e : new AppError(
+        'E_CONNECT_FAILED',
+        businessError.message ?? 'connection failed',
+        ErrorStage.CONNECTION,
+        true,
+        businessError.code
+      );
+      this.logger.error('DSK_CONNECT_FAILED', 'device=' + peer.deviceId.slice(-4) +
+        ' code=' + (error.systemCode ?? -1).toString() + ' message=' + error.message);
+      this.fail(id, error);
+      throw error;
+    }
   }
   accept(want: Record<string, Object>): boolean {
-    if (this.destroyed) return false; const raw = want[KEY]; if (typeof raw !== 'object' || raw === null) return false; const p = raw as Record<string, Object>; const peer = p['PeerInfo'] as abilityConnectionManager.PeerInfo; const options = p['ConnectOption'] as abilityConnectionManager.ConnectOptions; const token = p['ohos.dms.collabToken']; const parameters = options?.parameters as Record<string, string>; if (typeof peer !== 'object' || typeof options !== 'object' || typeof token !== 'string' || (token as string).length === 0 || typeof parameters !== 'object' || parameters[CHANNEL_KEY] !== CHANNEL_VALUE) return false;
-    if (typeof peer.deviceId !== 'string' || peer.deviceId.length === 0) return false;
+    if (this.destroyed) return false;
+    const raw = want[KEY];
+    let peer: abilityConnectionManager.PeerInfo;
+    let options: abilityConnectionManager.ConnectOptions;
+    let token: Object | undefined;
+    if (typeof raw === 'object' && raw !== null) {
+      const p = raw as Record<string, Object>;
+      peer = (p['PeerInfo'] ?? p[PEER_INFO_KEY]) as abilityConnectionManager.PeerInfo;
+      options = (p['ConnectOption'] ?? p[CONNECT_OPTIONS_KEY]) as abilityConnectionManager.ConnectOptions;
+      token = p['ohos.dms.collabToken'] ?? p['ohos.collaboration.key.token'] ??
+        p['ohos.collaboration.key.collaborationToken'];
+    } else {
+      peer = want[PEER_INFO_KEY] as abilityConnectionManager.PeerInfo;
+      options = want[CONNECT_OPTIONS_KEY] as abilityConnectionManager.ConnectOptions;
+      token = want['ohos.dms.collabToken'] ?? want['ohos.collaboration.key.token'] ??
+        want['ohos.collaboration.key.collaborationToken'];
+    }
+    const innerKeys: string = typeof raw === 'object' && raw !== null ?
+      Object.keys(raw as Record<string, Object>).join(',') : '';
+    this.logger.info('DSK_COLLAB_RECEIVED', 'topKeys=' + Object.keys(want).join(',') +
+      ' innerKeys=' + innerKeys + ' peer=' + (typeof peer === 'object').toString() +
+      ' options=' + (typeof options === 'object').toString() +
+      ' tokenLength=' + (typeof token === 'string' ? (token as string).length : 0).toString());
+    const parameters = options?.parameters as Record<string, string>;
+    if (typeof peer !== 'object' || typeof options !== 'object' || typeof token !== 'string' ||
+      (token as string).length === 0 || typeof parameters !== 'object' ||
+      parameters[CHANNEL_KEY] !== CHANNEL_VALUE) {
+      this.logger.error('DSK_COLLAB_REJECTED', 'reason=required_field_or_channel_missing');
+      return false;
+    }
+    if (typeof peer.deviceId !== 'string' || peer.deviceId.length === 0) {
+      this.logger.error('DSK_COLLAB_REJECTED', 'reason=peer_device_id_missing');
+      return false;
+    }
     const device: PeerDevice = { deviceId: peer.deviceId, deviceName: '', deviceType: '' }; let id: number;
     try { id = this.api.create(SERVICE, this.context, peer, options); } catch (_) { return false; }
     const session: Session = { device, id, state: 'CONNECTING', seen: new Set<string>() }; const list = this.sessionsByDevice.get(device.deviceId) ?? []; list.push(session); this.sessionsByDevice.set(device.deviceId, list); this.deviceBySession.set(id, device.deviceId); this.bind(session); try { this.api.accept(id, token as string).catch((e: BusinessError) => this.fail(id, new AppError('E_ACCEPT_FAILED', e.message ?? 'accept failed', ErrorStage.CONNECTION, true, e.code))); } catch (_) { this.remove(session, false); return false; } return true;

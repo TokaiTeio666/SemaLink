@@ -42,19 +42,26 @@ export class MultiDeviceProtocolCodec {
     let value: DataEnvelope;
     try { value = JSON.parse(encoded) as DataEnvelope; } catch (_) { throw invalid(); }
     this.validateShape(value);
-    if (value.peer.sessionEpoch !== sessionEpoch || value.peer.peerTaskId !== value.peer.taskId + '@' + deviceId) throw invalid();
+    if (value.peer.sessionEpoch !== sessionEpoch) throw invalid();
     return value;
   }
 
   async validate(envelope: DataEnvelope, sessionEpoch: string, deviceId: string): Promise<void> {
     this.validateShape(envelope);
-    if (envelope.peer.sessionEpoch !== sessionEpoch || envelope.peer.peerTaskId !== envelope.peer.taskId + '@' + deviceId) throw invalid();
+    if (envelope.peer.sessionEpoch !== sessionEpoch) throw invalid();
     if (envelope.type === 'EVIDENCE_BATCH') {
       const payload: EvidenceBatchPayload = envelope.payload as EvidenceBatchPayload;
       const digests: string[] = [];
       for (const unit of payload.evidence) digests.push(await this.digest.digestEvidence(unit));
       if (payload.batchDigest !== digests.join('|')) throw invalid();
       if (!Number.isInteger(payload.encodedBytes) || payload.encodedBytes <= 0 || payload.encodedBytes > MAX_DATA_MESSAGE_BYTES) throw invalid();
+    }
+    if (envelope.type === 'EVIDENCE_PAGE') {
+      const payload: EvidencePagePayload = envelope.payload as EvidencePagePayload;
+      const digests: string[] = [];
+      for (const unit of payload.evidence) digests.push(await this.digest.digestEvidence(unit));
+      if (payload.pageDigest !== digests.join('|') || !Number.isInteger(payload.encodedBytes) ||
+        payload.encodedBytes <= 0 || payload.encodedBytes > MAX_DATA_MESSAGE_BYTES) throw invalid();
     }
   }
 

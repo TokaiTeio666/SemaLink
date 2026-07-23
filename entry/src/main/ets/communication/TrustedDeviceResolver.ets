@@ -8,6 +8,30 @@ export interface AvailableDeviceProvider {
   release(): void;
 }
 
+export interface AvailableDeviceInfo {
+  deviceId?: string;
+  networkId?: string;
+  deviceName?: string;
+  deviceType?: string;
+}
+
+/**
+ * DeviceManager identifies a distributed device with deviceId. Keep the
+ * networkId fallback for older service implementations that exposed only
+ * that alias, but never discard a valid device because the alias is absent.
+ */
+export function mapAvailableDevice(device: AvailableDeviceInfo): PeerDevice | undefined {
+  const deviceId: string = device.networkId ?? device.deviceId ?? '';
+  if (deviceId.length === 0) {
+    return undefined;
+  }
+  return {
+    deviceId: deviceId,
+    deviceName: device.deviceName ?? '',
+    deviceType: device.deviceType ?? ''
+  };
+}
+
 export class DistributedDeviceProvider implements AvailableDeviceProvider {
   private readonly manager: distributedDeviceManager.DeviceManager;
 
@@ -21,16 +45,11 @@ export class DistributedDeviceProvider implements AvailableDeviceProvider {
       const result: Array<PeerDevice> = [];
       const seen: Set<string> = new Set<string>();
       for (const device of devices) {
-        const networkId: string = device.networkId ?? '';
-        if (networkId.length === 0 || seen.has(networkId)) {
+        const peer = mapAvailableDevice(device as AvailableDeviceInfo);
+        if (peer === undefined || seen.has(peer.deviceId)) {
           continue;
         }
-        seen.add(networkId);
-        const peer: PeerDevice = {
-          deviceId: networkId,
-          deviceName: device.deviceName,
-          deviceType: device.deviceType
-        };
+        seen.add(peer.deviceId);
         result.push(peer);
       }
       return result;

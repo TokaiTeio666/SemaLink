@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@ohos/hypium';
-import { AvailableDeviceProvider, TrustedDeviceResolver } from '../main/ets/communication/TrustedDeviceResolver';
+import { AvailableDeviceInfo, AvailableDeviceProvider, mapAvailableDevice, TrustedDeviceResolver } from '../main/ets/communication/TrustedDeviceResolver';
 import { AppError } from '../main/ets/common/AppError';
 import { PeerDevice } from '../main/ets/model/AppModels';
 
@@ -17,6 +17,23 @@ class FakeProvider implements AvailableDeviceProvider {
 
 export default function trustedDeviceResolverTest(): void {
   describe('TrustedDeviceResolver', () => {
+    it('mapsTheDistributedDeviceManagerDeviceId', 0, () => {
+      const info: AvailableDeviceInfo = {
+        deviceId: 'distributed-device-a', deviceName: 'MatePad', deviceType: 'tablet'
+      };
+      const peer = mapAvailableDevice(info);
+      expect(peer?.deviceId).assertEqual('distributed-device-a');
+      expect(peer?.deviceName).assertEqual('MatePad');
+    });
+
+    it('supportsLegacyNetworkIdWithoutDroppingTheDevice', 0, () => {
+      const info: AvailableDeviceInfo = {
+        networkId: 'legacy-network-a', deviceName: 'Legacy', deviceType: 'phone'
+      };
+      const peer = mapAvailableDevice(info);
+      expect(peer?.deviceId).assertEqual('legacy-network-a');
+    });
+
     it('returnsOnlyDevice', 0, async () => {
       const provider = new FakeProvider([{ deviceId: 'd1', deviceName: 'MatePad', deviceType: 'tablet' }]);
       const peer = await new TrustedDeviceResolver(provider).resolveUnique();

@@ -5,6 +5,7 @@ import cryptoFramework from '@ohos.security.cryptoFramework';
 import { Logger } from '../common/Logger';
 
 export type PeerConnectionState = 'DISCONNECTED' | 'CONNECTING' | 'BINDING' | 'READY' | 'FAILED';
+export type PeerConnectionStateListener = (deviceId: string, state: PeerConnectionState) => void;
 
 interface PeerConnection {
   peer: PeerDevice;
@@ -36,8 +37,11 @@ interface DataFrameMessage { type: string; payload: Object; }
 export class PeerConnectionPool {
   private readonly connections = new Map<string, PeerConnection>();
   private readonly usedTokens = new Set<string>();
+  private readonly usedTokenAt = new Map<string, number>();
   private readonly dataChannel: DskDataChannel;
-  private readonly dataHandlers = new Map<string, (text: string) => void>();
+  private readonly dataHandlers = new Map<string, Set<(text: string) => void>>();
+  private readonly bindTimers = new Map<string, number>();
+  private readonly stateListeners = new Set<PeerConnectionStateListener>();
   private readonly clock: () => number;
   private readonly tokenGenerator: BindingTokenGenerator;
   private readonly logger = new Logger();
@@ -66,28 +70,37 @@ export class PeerConnectionPool {
   async beginBinding(deviceId: string): Promise<boolean> {
     const connection = this.require(deviceId);
     if (connection.state !== 'DISCONNECTED' && connection.state !== 'FAILED') return connection.state === 'READY';
-    connection.state = 'BINDING';
+    this.transition(deviceId, connection, 'BINDING');
     connection.endpointVersion += 1;
-    connection.bindingToken = await this.tokenGenerator.generate();
+    this.pruneUsedTokens();
+    try {
+      connection.bindingToken = await this.tokenGenerator.generate();
+    } catch (error) {
+      this.transition(deviceId, connection, 'FAILED');
+      throw error as Error;
+    }
     connection.sessionEpoch = connection.bindingToken;
     connection.expiresAtMs = this.clock() + 30000;
     const bind: DataBindPayload = { deviceId: deviceId, controlSessionId: deviceId,
       endpointVersion: connection.endpointVersion, sessionEpoch: connection.sessionEpoch, bindingToken: connection.bindingToken };
     const result = new Promise<boolean>((resolve) => {
       connection.bindWaiter = resolve;
-      setTimeout((): void => {
+      const timer = setTimeout((): void => {
         if (connection.bindWaiter !== undefined) {
           connection.bindWaiter = undefined;
-          connection.state = 'FAILED';
+          this.transition(deviceId, connection, 'FAILED');
           resolve(false);
         }
+        this.bindTimers.delete(deviceId);
       }, Math.max(1, connection.expiresAtMs - this.clock()));
+      this.bindTimers.set(deviceId, timer);
     });
     try {
       await this.dataChannel.send(deviceId, JSON.stringify({ type: 'DATA_BIND', payload: bind }));
     } catch (error) {
       connection.bindWaiter = undefined;
-      connection.state = 'FAILED';
+      this.transition(deviceId, connection, 'FAILED');
+      this.clearBindTimer(deviceId);
       const message = error instanceof Error ? error.message : 'DSK data bind send failed';
       throw new Error(message);
     }
@@ -98,25 +111,46 @@ export class PeerConnectionPool {
     // The payload identifies the initiator's target, while the transport session
     // identifies the peer visible to the responder. Use the session key at the
     // receiving side and retain payload.deviceId in the ACK for the initiator.
-    const connection = this.connections.get(transportDeviceId ?? payload.deviceId);
+    const deviceId: string = transportDeviceId ?? payload.deviceId;
+    const connection = this.connections.get(deviceId);
     if (connection === undefined) return false;
     if (connection.state !== 'DISCONNECTED' && connection.state !== 'BINDING') return false;
     if (connection.state === 'BINDING' && (connection.endpointVersion !== payload.endpointVersion ||
       connection.bindingToken !== payload.bindingToken || connection.sessionEpoch !== payload.sessionEpoch ||
       connection.expiresAtMs <= this.clock())) {
-      connection.state = 'FAILED';
+      this.transition(deviceId, connection, 'FAILED');
       return false;
     }
     if (this.usedTokens.has(payload.bindingToken)) return false;
     this.usedTokens.add(payload.bindingToken);
+    this.usedTokenAt.set(payload.bindingToken, this.clock());
     connection.endpointVersion = payload.endpointVersion;
     connection.bindingToken = '';
     connection.sessionEpoch = payload.sessionEpoch;
-    connection.state = 'READY';
+    this.transition(deviceId, connection, 'READY');
     return true;
   }
 
-  onDataMessage(deviceId: string, handler: (text: string) => void): void { this.dataHandlers.set(deviceId, handler); }
+  onStateChanged(listener: PeerConnectionStateListener): void {
+    this.stateListeners.add(listener);
+  }
+
+  removeStateChanged(listener: PeerConnectionStateListener): void {
+    this.stateListeners.delete(listener);
+  }
+
+  onDataMessage(deviceId: string, handler: (text: string) => void): void {
+    let handlers = this.dataHandlers.get(deviceId);
+    if (handlers === undefined) { handlers = new Set<(text: string) => void>(); this.dataHandlers.set(deviceId, handlers); }
+    handlers.add(handler);
+  }
+
+  removeDataMessage(deviceId: string, handler: (text: string) => void): void {
+    const handlers = this.dataHandlers.get(deviceId);
+    if (handlers === undefined) return;
+    handlers.delete(handler);
+    if (handlers.size === 0) this.dataHandlers.delete(deviceId);
+  }
 
   async send(deviceId: string, encodedEnvelope: string): Promise<void> {
     const connection = this.require(deviceId);
@@ -136,9 +170,12 @@ export class PeerConnectionPool {
   async close(deviceId: string): Promise<void> {
     const connection = this.connections.get(deviceId);
     if (connection === undefined) return;
+    this.clearBindTimer(deviceId);
     connection.bindWaiter?.(false);
     connection.bindWaiter = undefined;
     this.dataHandlers.delete(deviceId);
+    this.dataChannel.clearDevice(deviceId);
+    this.transition(deviceId, connection, 'DISCONNECTED');
     this.connections.delete(deviceId);
   }
 
@@ -147,6 +184,9 @@ export class PeerConnectionPool {
     for (const id of this.connections.keys()) ids.push(id);
     for (const id of ids) await this.close(id);
     this.usedTokens.clear();
+    this.usedTokenAt.clear();
+    this.bindTimers.clear();
+    this.stateListeners.clear();
   }
 
   private require(deviceId: string): PeerConnection {
@@ -179,11 +219,34 @@ export class PeerConnectionPool {
       const connection = this.connections.get(deviceId);
       if (connection === undefined || connection.state !== 'BINDING' || payload.deviceId !== deviceId ||
         payload.endpointVersion !== connection.endpointVersion || payload.sessionEpoch !== connection.sessionEpoch) return;
-      connection.state = 'READY';
+      this.clearBindTimer(deviceId);
+      this.transition(deviceId, connection, 'READY');
       connection.bindWaiter?.(true);
       connection.bindWaiter = undefined;
       return;
     }
-    this.dataHandlers.get(deviceId)?.(text);
+    for (const handler of this.dataHandlers.get(deviceId) ?? new Set<(text: string) => void>()) handler(text);
+  }
+
+  private clearBindTimer(deviceId: string): void {
+    const timer = this.bindTimers.get(deviceId);
+    if (timer !== undefined) clearTimeout(timer);
+    this.bindTimers.delete(deviceId);
+  }
+
+  private transition(deviceId: string, connection: PeerConnection, state: PeerConnectionState): void {
+    if (connection.state === state) return;
+    connection.state = state;
+    for (const listener of this.stateListeners) listener(deviceId, state);
+  }
+
+  private pruneUsedTokens(): void {
+    const expiry = this.clock() - 60000;
+    for (const token of this.usedTokenAt.keys()) {
+      if ((this.usedTokenAt.get(token) ?? this.clock()) < expiry) {
+        this.usedTokenAt.delete(token);
+        this.usedTokens.delete(token);
+      }
+    }
   }
 }

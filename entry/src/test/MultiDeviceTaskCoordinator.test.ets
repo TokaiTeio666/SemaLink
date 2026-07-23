@@ -1,7 +1,12 @@
 import { describe, expect, it } from '@ohos/hypium';
 import { EvidenceUnit, TaskRequest } from '../main/ets/contracts/semantic/SemanticModels';
 import { DataEnvelope } from '../main/ets/protocol/MultiDeviceProtocolModels';
-import { MultiDeviceTaskCoordinator, CoordinatorCandidate, CoordinatorTransport } from '../main/ets/communication/MultiDeviceTaskCoordinator';
+import {
+  CoordinatedTaskResult,
+  MultiDeviceTaskCoordinator,
+  CoordinatorCandidate,
+  CoordinatorTransport
+} from '../main/ets/communication/MultiDeviceTaskCoordinator';
 
 function task(id: string): TaskRequest {
   return { semanticContractVersion: '1.0', taskId: id, queryText: 'query', requiredConcepts: ['alpha', 'beta'],
@@ -56,8 +61,11 @@ export default function multiDeviceTaskCoordinatorTest(): void {
         ['remote-c:1', [unit('b', 'beta', 'remote-c')]]
       ]));
       const coordinator = new MultiDeviceTaskCoordinator(transport, () => [candidate('local', true), candidate('remote-b', false), candidate('remote-c', false)]);
-      const result = await coordinator.submit(task('task-1'));
+      const result: CoordinatedTaskResult = await coordinator.submit(task('task-1'));
       expect(result.feedback).assertEqual('ENOUGH');
+      expect(result.acceptedEvidence.length).assertEqual(2);
+      expect(result.acceptedEvidence[0].title).assertEqual('a');
+      expect(result.acceptedEvidence[1].sourceDeviceId).assertEqual('remote-b');
       expect(transport.sent.length >= 2).assertEqual(true);
       coordinator.onEnvelope('remote-c', {} as DataEnvelope);
     });

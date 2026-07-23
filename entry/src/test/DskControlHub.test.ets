@@ -44,6 +44,20 @@ const acceptWant = (id: string): Record<string, Object> => {
   return wantParam;
 };
 
+const acceptWantWithApi24InnerKeys = (id: string): Record<string, Object> => {
+  const peerInfo: abilityConnectionManager.PeerInfo = {
+    deviceId: id, bundleName: 'b', moduleName: 'entry', abilityName: 'EntryAbility'
+  };
+  const options: abilityConnectionManager.ConnectOptions = { needSendData: false, parameters: { 'semalink.channel': 'DSK_DATA' } };
+  const collabParam = new Object() as Record<string, Object>;
+  collabParam[abilityConnectionManager.CollaborationKeys.PEER_INFO] = peerInfo;
+  collabParam[abilityConnectionManager.CollaborationKeys.CONNECT_OPTIONS] = options;
+  collabParam['ohos.collaboration.key.token'] = 'token-' + id;
+  const wantParam = new Object() as Record<string, Object>;
+  wantParam['ohos.extra.param.key.supportCollaborateIndex'] = collabParam;
+  return wantParam;
+};
+
 class TestListener implements DskControlHubListener {
   private readonly onMessageCallback: (id: string) => void;
   private readonly onClosedCallback: (id: string) => void;
@@ -70,6 +84,12 @@ export default function dskControlHubTest(): void {
       expect(hub.deviceIds().length).assertEqual(2);
       expect(hub.stateOf('remote-b')).assertEqual('CONNECTING');
       expect(hub.stateOf('remote-c')).assertEqual('CONNECTING');
+    });
+    it('acceptsApi24KeysInsideLegacyCollaborationContainer', 0, () => {
+      const api = new FakeApi();
+      const hub = new DskControlHub({} as common.UIAbilityContext, 'b', new Logger(), api);
+      expect(hub.accept(acceptWantWithApi24InnerKeys('remote-api24'))).assertTrue();
+      expect(hub.deviceIds().length).assertEqual(1);
     });
     it('waits for an inbound connect callback before sending', 0, async () => {
       const api = new FakeApi();

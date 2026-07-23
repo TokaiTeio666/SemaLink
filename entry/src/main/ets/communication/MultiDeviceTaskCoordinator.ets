@@ -26,6 +26,10 @@ export interface CoordinatorTransport {
   search(deviceId: string, task: TaskRequest, round: 1 | 2): Promise<EvidenceUnit[]>;
 }
 
+export interface CoordinatedTaskResult extends TaskSufficiencyResult {
+  acceptedEvidence: EvidenceUnit[];
+}
+
 export class MultiDeviceTaskCoordinator {
   private activeTaskId: string = '';
   private active = false;
@@ -41,7 +45,7 @@ export class MultiDeviceTaskCoordinator {
     this.candidates = candidates;
   }
 
-  async submit(task: TaskRequest): Promise<TaskSufficiencyResult> {
+  async submit(task: TaskRequest): Promise<CoordinatedTaskResult> {
     if (this.active) throw new AppError('E_BUSY', 'Another semantic task is active', ErrorStage.LIFECYCLE, true);
     validateTaskRequest(task);
     this.active = true;
@@ -97,7 +101,7 @@ export class MultiDeviceTaskCoordinator {
         result = this.evaluate(task, 2);
       }
       this.terminalTaskIds.add(task.taskId);
-      return result;
+      return this.withAcceptedEvidence(result);
     } finally {
       this.active = false;
       this.activeTaskId = '';
@@ -180,6 +184,51 @@ export class MultiDeviceTaskCoordinator {
       };
     }
     return result;
+  }
+
+  private withAcceptedEvidence(result: TaskSufficiencyResult): CoordinatedTaskResult {
+    const acceptedIds = new Set<string>(result.acceptedEvidenceIds);
+    const acceptedEvidence: EvidenceUnit[] = [];
+    for (const verified of this.aggregator.result().evidence) {
+      if (acceptedIds.has(verified.evidence.evidenceId)) {
+        acceptedEvidence.push(this.cloneEvidence(verified.evidence));
+      }
+    }
+    return {
+      feedback: result.feedback,
+      coverage: result.coverage,
+      confidence: result.confidence,
+      diversity: result.diversity,
+      coveredConcepts: result.coveredConcepts.slice(),
+      missingConcepts: result.missingConcepts.slice(),
+      acceptedEvidenceIds: result.acceptedEvidenceIds.slice(),
+      acceptedEvidence: acceptedEvidence
+    };
+  }
+
+  private cloneEvidence(unit: EvidenceUnit): EvidenceUnit {
+    return {
+      semanticContractVersion: unit.semanticContractVersion,
+      evidenceId: unit.evidenceId,
+      evidenceGroupId: unit.evidenceGroupId,
+      sourceDeviceId: unit.sourceDeviceId,
+      sourceDocId: unit.sourceDocId,
+      sourceChunkId: unit.sourceChunkId,
+      parentEvidenceId: unit.parentEvidenceId,
+      level: unit.level,
+      title: unit.title,
+      summary: unit.summary,
+      snippet: unit.snippet,
+      relevance: unit.relevance,
+      coveredConcepts: unit.coveredConcepts.slice(),
+      estimatedCoverageGain: unit.estimatedCoverageGain,
+      byteCost: unit.byteCost,
+      privacyLevel: unit.privacyLevel,
+      privacyCost: unit.privacyCost,
+      energyCost: unit.energyCost,
+      hash: unit.hash,
+      canEscalateTo: unit.canEscalateTo.slice()
+    };
   }
 
   private makeEnvelope(deviceId: string, task: TaskRequest, type: 'TASK' | 'TSF', payload: DataPayload): DataEnvelope {

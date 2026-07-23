@@ -33,6 +33,12 @@ export default class EntryAbility extends UIAbility {
   }
 
   onCollaborate(wantParam: Record<string, Object>): AbilityConstant.CollaborateResult {
+    const raw = wantParam['ohos.extra.param.key.supportCollaborateIndex'];
+    const innerKeys: string = typeof raw === 'object' && raw !== null ?
+      Object.keys(raw as Record<string, Object>).join(',') : '';
+    hilog.info(DOMAIN, 'testTag',
+      'onCollaborate received topKeys=%{public}s innerKeys=%{public}s',
+      Object.keys(wantParam).join(','), innerKeys);
     return AppRuntime.current().acceptCollaboration(wantParam)
       ? AbilityConstant.CollaborateResult.ACCEPT
       : AbilityConstant.CollaborateResult.REJECT;
@@ -60,6 +66,11 @@ export default class EntryAbility extends UIAbility {
         .then((granted: boolean) => {
           hilog.info(DOMAIN, 'testTag', 'permission_request_finished: %{public}s',
             granted ? 'granted' : 'denied');
+          if (granted) {
+            AppRuntime.current().refreshAvailableDevices(true).catch((error: Object) => {
+              hilog.error(DOMAIN, 'testTag', 'Device discovery failed: %{public}s', JSON.stringify(error));
+            });
+          }
         });
     });
   }
@@ -70,6 +81,11 @@ export default class EntryAbility extends UIAbility {
 
   onForeground(): void {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onForeground');
+    if (this.distributedPermissionGranted) {
+      AppRuntime.current().refreshAvailableDevices(true).catch((error: Object) => {
+        hilog.error(DOMAIN, 'testTag', 'Foreground device discovery failed: %{public}s', JSON.stringify(error));
+      });
+    }
   }
 
   onBackground(): void {

@@ -44,10 +44,21 @@ export interface PeerStatusSnapshot {
   failureCode: string;
 }
 
+export interface AutomaticQueryResultItem {
+  evidenceId: string;
+  title: string;
+  content: string;
+  sourceName: string;
+  sourceDeviceIdMasked: string;
+  relevance: number;
+  level: 'L1' | 'L2';
+}
+
 export interface AppSnapshot {
   automaticQueryProgress: AutomaticQueryProgress;
   automaticSourceNames: string[];
   automaticExcludedSourceNames: string[];
+  automaticResultItems: AutomaticQueryResultItem[];
   peerStatuses: PeerStatusSnapshot[];
   activePeerCount: number;
   evidenceSourceDeviceIds: string[];
@@ -107,6 +118,7 @@ export const INITIAL_SNAPSHOT: AppSnapshot = {
   automaticQueryProgress: 'IDLE',
   automaticSourceNames: [],
   automaticExcludedSourceNames: [],
+  automaticResultItems: [],
   peerStatuses: [],
   activePeerCount: 0,
   evidenceSourceDeviceIds: [],
@@ -171,6 +183,7 @@ export function cloneSnapshot(
     automaticQueryProgress: base.automaticQueryProgress,
     automaticSourceNames: base.automaticSourceNames,
     automaticExcludedSourceNames: base.automaticExcludedSourceNames,
+    automaticResultItems: base.automaticResultItems,
     peerStatuses: base.peerStatuses,
     activePeerCount: base.activePeerCount,
     evidenceSourceDeviceIds: base.evidenceSourceDeviceIds,

@@ -61,6 +61,25 @@ class EmptyDeviceProvider implements AvailableDeviceProvider {
   release(): void {}
 }
 
+class ListingDeviceProvider implements AvailableDeviceProvider {
+  calls: number = 0;
+  released: number = 0;
+  private readonly devices: Array<PeerDevice>;
+
+  constructor(devices: Array<PeerDevice>) {
+    this.devices = devices;
+  }
+
+  async list(): Promise<Array<PeerDevice>> {
+    this.calls += 1;
+    return this.devices;
+  }
+
+  release(): void {
+    this.released += 1;
+  }
+}
+
 async function capturedKnowledgeError(action: () => Promise<void>): Promise<KnowledgeError | undefined> {
   try {
     await action();
@@ -127,6 +146,30 @@ export default function appRuntimeTest(): void {
       runtime.destroy();
     });
 
+    it('refreshesAndPublishesAvailableDevices', 0, async () => {
+      const provider = new ListingDeviceProvider([
+        { deviceId: 'remote-b', deviceName: 'Tablet B', deviceType: 'tablet' },
+        { deviceId: 'remote-a', deviceName: 'Phone A', deviceType: 'phone' }
+      ]);
+      const runtime = new AppRuntime(fakeContext() as never, {
+        transport: new CountingTransport(),
+        resolverFactory: (): TrustedDeviceResolver => new TrustedDeviceResolver(provider)
+      });
+      runtime.store.update({ activePeerCount: 3 });
+
+      await runtime.refreshAvailableDevices();
+
+      expect(provider.calls).assertEqual(1);
+      expect(provider.released).assertEqual(1);
+      expect(runtime.store.snapshot().peerStatuses.length).assertEqual(2);
+      expect(runtime.store.snapshot().peerStatuses[0].deviceName).assertEqual('Phone A');
+      expect(runtime.store.snapshot().peerStatuses[1].deviceName).assertEqual('Tablet B');
+      expect(runtime.store.snapshot().peerStatuses[0].controlState).assertEqual('DISCONNECTED');
+      expect(runtime.store.snapshot().peerStatuses[0].dataState).assertEqual('DISCONNECTED');
+      expect(runtime.store.snapshot().activePeerCount).assertEqual(0);
+      runtime.destroy();
+    });
+
     it('exposes one shared multi-device runtime assembly', 0, () => {
       const runtime = new AppRuntime(fakeContext() as never, { transport: new CountingTransport() });
       expect(runtime.deviceDirectory as Object).assertEqual(runtime.semanticDeviceDirectory as Object);
@@ -146,7 +189,7 @@ export default function appRuntimeTest(): void {
       const evidence: EvidenceUnit = {
         semanticContractVersion: '1.0', evidenceId: 'local-evidence', evidenceGroupId: 'local-group',
         sourceDeviceId: 'local', sourceDocId: 'doc-1', level: 'L1', title: 'Local answer',
-        relevance: 1, coveredConcepts: [], estimatedCoverageGain: 1, byteCost: 100,
+        summary: 'Actual summary', relevance: 1, coveredConcepts: [], estimatedCoverageGain: 1, byteCost: 100,
         privacyLevel: 'PRIVATE_GROUP', privacyCost: 0, energyCost: 0, hash: 'local-hash', canEscalateTo: ['L2']
       };
       const provider = new FakeSemanticProvider();
@@ -162,6 +205,11 @@ export default function appRuntimeTest(): void {
       expect(runtime.store.snapshot().collaborationRecords.length).assertEqual(1);
       expect(runtime.store.snapshot().collaborationRecords[0].sourceDeviceNames[0]).assertEqual('local');
       expect(runtime.store.snapshot().collaborationRecords[0].evidenceCount).assertEqual(1);
+      expect(runtime.store.snapshot().automaticResultItems.length).assertEqual(1);
+      expect(runtime.store.snapshot().automaticResultItems[0].title).assertEqual('Local answer');
+      expect(runtime.store.snapshot().automaticResultItems[0].content).assertEqual('Actual summary');
+      expect(runtime.store.snapshot().automaticResultItems[0].sourceName).assertEqual('本机');
+      expect(runtime.store.snapshot().totalTaskMs > 0).assertTrue();
       runtime.destroy();
     });
   });

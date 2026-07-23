@@ -1,5 +1,9 @@
 import { describe, expect, it } from '@ohos/hypium';
-import { BindingTokenGenerator, PeerConnectionPool } from '../main/ets/communication/PeerConnectionPool';
+import {
+  BindingTokenGenerator,
+  PeerConnectionPool,
+  PeerConnectionState
+} from '../main/ets/communication/PeerConnectionPool';
 import { PeerDevice } from '../main/ets/model/AppModels';
 import { DskDataTransport } from '../main/ets/communication/control/DskDataChannel';
 
@@ -43,6 +47,29 @@ export default function peerConnectionPoolTest(): void {
       expect(await binding).assertTrue();
       expect(pool.stateOf('remote-b')).assertEqual('READY');
       await pool.destroy();
+    });
+
+    it('publishes binding ready and disconnected state changes', 0, async () => {
+      const hub = new Hub();
+      const pool = new PeerConnectionPool(hub, undefined, new FixedTokenGenerator());
+      const changes: string[] = [];
+      pool.onStateChanged((deviceId: string, state: PeerConnectionState): void => {
+        changes.push(deviceId + ':' + state);
+      });
+      await pool.refreshPeers([PEER_B]);
+      const binding = pool.beginBinding('remote-b');
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      const ackText = '{"type":"DATA_BIND_ACK","payload":{"deviceId":"remote-b","endpointVersion":1,"sessionEpoch":"token","acceptedAtMs":2}}';
+      const ack: DataFrame = { channel: 'DATA', version: '1.0', frameId: 'ack-state', index: 0, total: 1,
+        textLength: ackText.length, payload: ackText };
+      hub.handler?.('remote-b', ack);
+      expect(await binding).assertTrue();
+      await pool.close('remote-b');
+
+      expect(changes.length).assertEqual(3);
+      expect(changes[0]).assertEqual('remote-b:BINDING');
+      expect(changes[1]).assertEqual('remote-b:READY');
+      expect(changes[2]).assertEqual('remote-b:DISCONNECTED');
     });
   });
 }

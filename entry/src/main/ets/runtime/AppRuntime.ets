@@ -14,10 +14,23 @@ import { LocalKnowledgeGateway } from '../contracts/knowledge/LocalKnowledgeGate
 import { KnowledgeApplicationService } from '../application/KnowledgeApplicationService';
 import { publishKnowledgeResult } from '../application/KnowledgeResultMapper';
 import { KnowledgeError } from '../contracts/knowledge/KnowledgeError';
-import { ConnectionState, PeerDevice } from '../model/AppModels';
+import {
+  ConnectionState,
+  ControlChannelState,
+  DataChannelState,
+  AutomaticQueryResultItem,
+  maskDeviceId,
+  PeerDevice,
+  PeerStatusSnapshot
+} from '../model/AppModels';
 import { DeviceDirectory } from '../communication/DeviceDirectory';
 import { DeviceSemanticRouter } from '../communication/DeviceSemanticRouter';
-import { MultiDeviceTaskCoordinator, CoordinatorTransport, CoordinatorCandidate } from '../communication/MultiDeviceTaskCoordinator';
+import {
+  CoordinatedTaskResult,
+  MultiDeviceTaskCoordinator,
+  CoordinatorTransport,
+  CoordinatorCandidate
+} from '../communication/MultiDeviceTaskCoordinator';
 import { PeerTaskResponder, ResponderMessage } from '../communication/PeerTaskResponder';
 import { EvidenceAggregator } from '../communication/EvidenceAggregator';
 import { DskControlHub } from '../communication/control/DskControlHub';
@@ -25,7 +38,12 @@ import { PeerConnectionPool } from '../communication/PeerConnectionPool';
 import { EvidenceUtilityScheduler } from '../communication/EvidenceUtilityScheduler';
 import { TaskSufficiencyEvaluator } from '../communication/TaskSufficiencyEvaluator';
 import { ProgressiveQueryCoordinator } from '../communication/ProgressiveQueryCoordinator';
-import { Task3TlsCoordinator } from '../communication/tls/Task3TlsCoordinator';
+import { Task3ConnectionStateObserver, Task3TlsCoordinator } from '../communication/tls/Task3TlsCoordinator';
+import {
+  activePeerCount as countActivePeers,
+  PeerChannelStateSource,
+  projectPeerStatuses
+} from '../application/PeerStatusProjection';
 import {
   ImportReport,
   KnowledgePayloadLevel,
@@ -34,7 +52,6 @@ import {
   LocalKnowledgeResult
 } from '../contracts/knowledge/KnowledgeModels';
 import { EvidenceUnit, TaskRequest } from '../contracts/semantic/SemanticModels';
-import { TaskSufficiencyResult } from '../contracts/semantic/SemanticModels';
 import { buildAutomaticTask } from '../application/AutomaticQueryPolicy';
 import { AutomaticQueryProgress } from '../application/AutomaticQueryPolicy';
 import { ErrorStage, AppError } from '../common/AppError';
@@ -49,6 +66,24 @@ import {
 interface RuntimeDataMessage { type?: string; payload?: Object; }
 interface RuntimeEnvelopeWrapper { envelope?: Object; }
 interface RuntimeEvidencePayload { taskId: string; round: number; evidence?: EvidenceUnit[]; }
+
+class RuntimePeerChannelStateSource implements PeerChannelStateSource {
+  private readonly controlHub: DskControlHub | undefined;
+  private readonly connectionPool: PeerConnectionPool | undefined;
+
+  constructor(controlHub: DskControlHub | undefined, connectionPool: PeerConnectionPool | undefined) {
+    this.controlHub = controlHub;
+    this.connectionPool = connectionPool;
+  }
+
+  controlStateOf(deviceId: string): ControlChannelState {
+    return this.controlHub?.stateOf(deviceId) ?? 'DISCONNECTED';
+  }
+
+  dataStateOf(deviceId: string): DataChannelState {
+    return this.connectionPool?.stateOf(deviceId) ?? 'DISCONNECTED';
+  }
+}
 
 class RuntimeCoordinatorTransport implements CoordinatorTransport {
   private readonly pool: PeerConnectionPool | undefined;
@@ -140,6 +175,9 @@ export class AppRuntime {
   private readonly runtimeTransport: RuntimeCoordinatorTransport;
   private readonly resolverFactory: ResolverFactory;
   private readonly automaticIdGenerator: SequenceIdGenerator;
+  private readonly discoveredPeers = new Map<string, PeerDevice>();
+  private readonly peerFailures = new Map<string, string>();
+  private readonly connectionObserver: Task3ConnectionStateObserver;
   private automaticTaskId: string = '';
   private knowledgeInitialization?: Promise<void>;
 
@@ -179,6 +217,17 @@ export class AppRuntime {
     this.tls = this.createTlsCoordinator(context, bundleName);
     this.controlHub = this.tls?.dsk;
     this.connectionPool = this.tls?.pool;
+    this.connectionObserver = (peer: PeerDevice, failureCode: string): void => {
+      if (this.destroyed) return;
+      this.discoveredPeers.set(peer.deviceId, peer);
+      if (failureCode.length > 0) {
+        this.peerFailures.set(peer.deviceId, failureCode);
+      } else {
+        this.peerFailures.delete(peer.deviceId);
+      }
+      this.publishPeerStatuses();
+    };
+    this.tls?.onConnectionStateChanged(this.connectionObserver);
     this.evidenceAggregator = new EvidenceAggregator();
     this.runtimeTransport = new RuntimeCoordinatorTransport(this.connectionPool, this.knowledgeProvider);
     const taskTransport: CoordinatorTransport = this.runtimeTransport;
@@ -303,6 +352,7 @@ export class AppRuntime {
     if (this.automaticTaskId.length > 0) {
       throw new AppError('E_BUSY', 'Another automatic query is active', ErrorStage.LIFECYCLE, true);
     }
+    const startedAtMs: number = Date.now();
     const taskId: string = this.automaticIdGenerator.next('automatic-query');
     this.automaticTaskId = taskId;
     const task: TaskRequest = buildAutomaticTask(taskId, queryText, 'PRIVATE_GROUP');
@@ -320,13 +370,17 @@ export class AppRuntime {
       automaticQueryProgress: 'ROUTING',
       automaticSourceNames: [],
       automaticExcludedSourceNames: [],
+      automaticResultItems: [],
       evidenceSourceDeviceIds: [],
       finalSufficiency: '',
+      totalTaskMs: 0,
       clearError: true
     });
     let automaticRecordCreated: boolean = false;
     try {
       const peers: Array<PeerDevice> = await this.resolverFactory().resolveAll();
+      for (const peer of peers) this.discoveredPeers.set(peer.deviceId, peer);
+      this.publishPeerStatuses();
       if (this.connectionPool !== undefined) {
         await this.connectionPool.refreshPeers(peers);
       }
@@ -365,11 +419,14 @@ export class AppRuntime {
         collaborationRecords: sortCollaborationRecords(recordsWithAutomatic),
         selectedCollaborationRecordId: taskId
       });
-      const result: TaskSufficiencyResult = await this.multiDeviceCoordinator.submit(task);
+      const result: CoordinatedTaskResult = await this.multiDeviceCoordinator.submit(task);
       const progress: AutomaticQueryProgress = result.feedback === 'ENOUGH' ? 'ANSWER_READY' :
         (result.feedback === 'ABORT' ? 'INSUFFICIENT' : 'FAILED');
       const phase: 'SUFFICIENT' | 'ABORTED' | 'FAILED' = result.feedback === 'ENOUGH' ? 'SUFFICIENT' :
         (result.feedback === 'ABORT' ? 'ABORTED' : 'FAILED');
+      const resultItems: AutomaticQueryResultItem[] = this.mapAutomaticResults(result.acceptedEvidence);
+      const resultSummary: string = result.feedback === 'ENOUGH' ?
+        '找到 ' + resultItems.length.toString() + ' 条相关内容' : '未找到足够的相关内容';
       this.store.update({
         automaticQueryProgress: progress,
         taskPhase: phase,
@@ -379,24 +436,25 @@ export class AppRuntime {
         taskConfidence: result.confidence,
         taskMissingConcepts: result.missingConcepts,
         finalSufficiency: result.feedback,
-        summary: result.feedback === 'ENOUGH' ?
-          'Answer ready from ' + result.acceptedEvidenceIds.length.toString() + ' evidence items' :
-          'No sufficient evidence found',
-        evidenceSourceDeviceIds: connected.map((peer: PeerDevice): string => peer.deviceId).concat(['local'])
+        summary: resultSummary,
+        automaticResultItems: resultItems,
+        evidenceSourceDeviceIds: this.acceptedSourceDeviceIds(result.acceptedEvidence),
+        totalTaskMs: Math.max(1, Date.now() - startedAtMs)
       });
       const completedRecords: Array<CollaborationRecord> = updateCollaborationRecord(taskId,
         this.store.snapshot().collaborationRecords, {
           status: result.feedback === 'ENOUGH' ? CollaborationRecordStatus.SYNCED : CollaborationRecordStatus.FAILED,
-          summary: result.feedback === 'ENOUGH' ?
-            'Answer ready from ' + result.acceptedEvidenceIds.length.toString() + ' evidence items' :
-            'No sufficient evidence found',
+          summary: resultSummary,
           evidenceCount: result.acceptedEvidenceIds.length
         });
       this.store.update({ collaborationRecords: sortCollaborationRecords(completedRecords) });
     } catch (error) {
       const appError: AppError = error instanceof AppError ? error :
         new AppError('E_AUTOMATIC_QUERY_FAILED', 'Automatic query failed', ErrorStage.QUERY, true);
-      this.store.update({ automaticQueryProgress: 'FAILED', taskPhase: 'FAILED', error: appError });
+      this.store.update({
+        automaticQueryProgress: 'FAILED', taskPhase: 'FAILED', automaticResultItems: [],
+        totalTaskMs: Math.max(1, Date.now() - startedAtMs), error: appError
+      });
       if (automaticRecordCreated) {
         const failedRecords: Array<CollaborationRecord> = updateCollaborationRecord(taskId,
           this.store.snapshot().collaborationRecords, {
@@ -411,11 +469,38 @@ export class AppRuntime {
     }
   }
 
+  async refreshAvailableDevices(connectDiscovered: boolean = false): Promise<void> {
+    const peers: Array<PeerDevice> = await this.resolverFactory().resolveAll();
+    this.discoveredPeers.clear();
+    for (const peer of peers) this.discoveredPeers.set(peer.deviceId, peer);
+    const knownIds = new Set<string>(peers.map((peer: PeerDevice): string => peer.deviceId));
+    for (const deviceId of this.peerFailures.keys()) {
+      if (!knownIds.has(deviceId)) this.peerFailures.delete(deviceId);
+    }
+    this.publishPeerStatuses();
+    if (connectDiscovered && this.tls !== undefined) {
+      await Promise.all(peers.map(async (peer: PeerDevice): Promise<void> => {
+        this.peerFailures.delete(peer.deviceId);
+        this.publishPeerStatuses();
+        try {
+          await this.tls?.connect(peer);
+        } catch (error) {
+          this.peerFailures.set(peer.deviceId, error instanceof AppError ? error.code : 'E_CONNECT_FAILED');
+          this.publishPeerStatuses();
+        }
+      }));
+    }
+    this.publishPeerStatuses();
+  }
+
   async cancelAutomaticQuery(): Promise<void> {
     const taskId: string = this.automaticTaskId;
     if (taskId.length === 0) return;
     await this.multiDeviceCoordinator.cancel(taskId);
-    this.store.update({ automaticQueryProgress: 'INSUFFICIENT', taskPhase: 'ABORTED', taskFeedback: 'ABORT', finalSufficiency: 'ABORT' });
+    this.store.update({
+      automaticQueryProgress: 'INSUFFICIENT', taskPhase: 'ABORTED', taskFeedback: 'ABORT',
+      finalSufficiency: 'ABORT', automaticResultItems: []
+    });
     const cancelledRecords: Array<CollaborationRecord> = updateCollaborationRecord(taskId,
       this.store.snapshot().collaborationRecords, {
         status: CollaborationRecordStatus.OFFLINE,
@@ -495,6 +580,7 @@ export class AppRuntime {
     this.peerTaskResponder.destroy();
     this.runtimeTransport.destroy();
     this.coordinator.destroy();
+    this.tls?.removeConnectionStateChanged(this.connectionObserver);
     this.tls?.destroy().catch((): void => { });
     this.ownedKnowledgeService.destroy();
   }
@@ -505,6 +591,39 @@ export class AppRuntime {
     } catch (_) {
       return undefined;
     }
+  }
+
+  private publishPeerStatuses(): void {
+    const peers: PeerDevice[] = Array.from(this.discoveredPeers.values());
+    const source = new RuntimePeerChannelStateSource(this.controlHub, this.connectionPool);
+    const statuses: PeerStatusSnapshot[] = projectPeerStatuses(peers, source, this.peerFailures);
+    this.store.update({ peerStatuses: statuses, activePeerCount: countActivePeers(statuses) });
+  }
+
+  private mapAutomaticResults(evidence: EvidenceUnit[]): AutomaticQueryResultItem[] {
+    return evidence.map((unit: EvidenceUnit): AutomaticQueryResultItem => {
+      const sourcePeer: PeerDevice | undefined = this.discoveredPeers.get(unit.sourceDeviceId);
+      const maskedId: string = unit.sourceDeviceId === 'local' ? '' : maskDeviceId(unit.sourceDeviceId);
+      const sourceName: string = unit.sourceDeviceId === 'local' ? '本机' :
+        (sourcePeer !== undefined && sourcePeer.deviceName.length > 0 ? sourcePeer.deviceName : maskedId);
+      return {
+        evidenceId: unit.evidenceId,
+        title: unit.title,
+        content: unit.summary ?? unit.snippet ?? '',
+        sourceName: sourceName,
+        sourceDeviceIdMasked: maskedId,
+        relevance: unit.relevance,
+        level: unit.level
+      };
+    });
+  }
+
+  private acceptedSourceDeviceIds(evidence: EvidenceUnit[]): string[] {
+    const result: string[] = [];
+    for (const unit of evidence) {
+      if (result.indexOf(unit.sourceDeviceId) < 0) result.push(unit.sourceDeviceId);
+    }
+    return result;
   }
 
   private async prepareKnowledge(context: common.UIAbilityContext): Promise<void> {

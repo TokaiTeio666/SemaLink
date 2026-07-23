@@ -30,6 +30,7 @@ struct Index {
       this.snapshot = state;
       this.question = state.question;
     });
+    this.refreshDevices();
   }
 
   aboutToDisappear(): void {
@@ -38,9 +39,10 @@ struct Index {
   }
 
   build() {
-    Column({ space: 14 }) {
-      this.header()
-      this.navigation()
+    Column() {
+      if (this.page === 'query') {
+        this.header()
+      }
       Scroll() {
         Column() {
           if (this.page === 'query') {
@@ -66,48 +68,46 @@ struct Index {
       .layoutWeight(1)
       .width('100%')
       .scrollBar(BarState.Off)
+      this.bottomNavigation()
     }
     .width('100%')
     .height('100%')
-    .padding({ left: 20, right: 20, top: 24, bottom: 24 })
+    .padding({ left: 16, right: 16, top: 14, bottom: 0 })
     .backgroundColor($r('app.color.page_background'))
   }
 
   @Builder
   header() {
     Row() {
-      Column({ space: 3 }) {
-        Text('SemaLink').fontSize(22).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
-        Text('Automatic knowledge routing').fontSize(12).fontColor($r('app.color.text_secondary'))
-      }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
-      Text(this.snapshot.automaticQueryProgress).fontSize(12).fontColor($r('app.color.accent'))
+      Text('☰').fontSize(24).fontColor($r('app.color.text_primary')).width(44)
+      Text('SemaLink').fontSize(21).fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary')).textAlign(TextAlign.Center).layoutWeight(1)
+      Text('♧').fontSize(24).fontColor($r('app.color.text_primary')).width(44).textAlign(TextAlign.End)
     }
-    .width('100%')
+    .width('100%').height(48).margin({ bottom: 8 })
   }
 
   @Builder
-  navigation() {
-    Row({ space: 6 }) {
-      this.navButton('query', 'Query')
-      this.navButton('devices', 'Devices')
-      this.navButton('history', 'History')
-      this.navButton('diagnostics', 'Diagnostics')
+  bottomNavigation() {
+    Row() {
+      this.bottomNavButton('query', '⌕', '查询')
+      this.bottomNavButton('devices', '▣', '设备')
+      this.bottomNavButton('history', '◷', '历史')
     }
-    .width('100%')
+    .width('100%').height(68).backgroundColor($r('app.color.surface'))
+    .border({ width: { top: 1 }, color: $r('app.color.border') })
   }
 
   @Builder
-  navButton(value: string, label: string) {
-    Button(label)
-      .id('nav-' + value)
-      .layoutWeight(1)
-      .height(40)
-      .fontSize(12)
-      .backgroundColor(this.page === value ? $r('app.color.accent') : $r('app.color.surface_muted'))
-      .fontColor(this.page === value ? Color.White : $r('app.color.text_primary'))
-      .onClick(() => this.page = value)
+  bottomNavButton(value: string, icon: string, label: string) {
+    Column({ space: 3 }) {
+      Text(icon).fontSize(22)
+        .fontColor(this.page === value ? $r('app.color.accent') : $r('app.color.text_secondary'))
+      Text(label).fontSize(11)
+        .fontColor(this.page === value ? $r('app.color.accent') : $r('app.color.text_secondary'))
+    }
+    .layoutWeight(1).height(60).justifyContent(FlexAlign.Center)
+    .onClick(() => this.page = value)
   }
 
   @Builder
@@ -149,7 +149,7 @@ struct Index {
   }
 
   private refreshDevices(): void {
-    this.snapshot = AppRuntime.current().store.snapshot();
+    this.runCommand(() => AppRuntime.current().refreshAvailableDevices(true));
   }
 
   private selectHistory(id: string): void {

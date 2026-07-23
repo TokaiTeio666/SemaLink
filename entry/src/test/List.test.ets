@@ -37,6 +37,8 @@ import collaborationRecordStateTest from './CollaborationRecordState.test';
 import progressiveQueryCoordinatorTest from './ProgressiveQueryCoordinator.test';
 import semaLinkAgentTest from './SemaLinkAgent.test';
 import peerStatusProjectionTest from './PeerStatusProjection.test';
+import peerMeshPlannerTest from './PeerMeshPlanner.test';
+import deviceTopologyProviderTest from './DeviceTopologyProvider.test';
 
 export default function testsuite(): void {
   commonModelsTest();
@@ -78,4 +80,6 @@ export default function testsuite(): void {
   progressiveQueryCoordinatorTest();
   semaLinkAgentTest();
   peerStatusProjectionTest();
+  peerMeshPlannerTest();
+  deviceTopologyProviderTest();
 }

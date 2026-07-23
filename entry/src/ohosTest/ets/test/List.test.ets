@@ -7,6 +7,9 @@ import semanticKnowledgeProviderDeviceTest from './SemanticKnowledgeProvider.tes
 import rdbCandidateSearchTest from './RdbCandidateSearch.test';
 import knowledgeDatabaseIndexTest from './KnowledgeDatabaseIndex.test';
 import rdbDocumentRepositoryTransactionTest from './RdbDocumentRepositoryTransaction.test';
+import collaborationRepositoryTest from './CollaborationRepository.test';
+import collaborationMigrationTest from './CollaborationMigration.test';
+import crossDeviceKnowledgeTransportTest from './CrossDeviceKnowledgeTransport.test';
 
 export default function testsuite() {
   abilityTest();
@@ -18,4 +21,7 @@ export default function testsuite() {
   rdbCandidateSearchTest();
   knowledgeDatabaseIndexTest();
   rdbDocumentRepositoryTransactionTest();
+  collaborationRepositoryTest();
+  collaborationMigrationTest();
+  crossDeviceKnowledgeTransportTest();
 }

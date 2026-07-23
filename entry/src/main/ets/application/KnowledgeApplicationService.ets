@@ -117,6 +117,13 @@ export class KnowledgeApplicationService implements LocalKnowledgeGateway, Seman
     return this.provider.getProfile();
   }
 
+  collaborationDatabase(): KnowledgeDatabase {
+    if (this.database === undefined) {
+      throw this.notInitialized();
+    }
+    return this.database;
+  }
+
   destroy(): void {
     if (this.destroyed) {
       return;

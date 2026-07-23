@@ -6,6 +6,15 @@ import { KnowledgePayloadLevel } from '../contracts/knowledge/KnowledgeModels';
 import { CollaborationRecord, CollaborationRecordStatus } from '../collaboration/CollaborationModels';
 import { CollaborationRecordList } from '../components/CollaborationRecordList';
 import { CollaborationRecordDetail } from '../components/CollaborationRecordDetail';
+import {
+  CollaborationPeer,
+  RemoteAccessRecord
+} from '../crossdevice/model/CollaborationModels';
+import { SharingPolicy } from '../crossdevice/model/SharingPolicy';
+import { CrossDeviceRuntime } from '../crossdevice/runtime/CrossDeviceRuntime';
+import { SystemVisibleDevice } from '../crossdevice/trust/SystemTrustedDeviceSource';
+import { CrossDeviceQueryScope } from
+  '../crossdevice/application/CrossDeviceKnowledgeQueryService';
 
 /**
  * Sentinel record used by the collaboration detail host when no record is currently selected.
@@ -59,7 +68,13 @@ struct Index {
   @State question: string = '';
   @State localQuestion: string = '';
   @State knowledgeLevel: KnowledgePayloadLevel = 'L2';
+  @State knowledgeScope: CrossDeviceQueryScope = CrossDeviceQueryScope.LOCAL_ONLY;
   @State collaborationBreakpoint: string = 'sm';
+  @State collaborationPeers: CollaborationPeer[] = [];
+  @State collaborationVisibleDevices: SystemVisibleDevice[] = [];
+  @State collaborationAccessRecords: RemoteAccessRecord[] = [];
+  @State collaborationSharingEnabled: boolean = false;
+  @State collaborationStatus: string = '跨设备协作将在本地知识就绪后启动';
   private unsubscribe?: () => void;
 
   aboutToAppear(): void {
@@ -81,6 +96,7 @@ struct Index {
         this.collaborationSection()
         this.peerStatusSection()
         this.knowledgeSection()
+        this.crossDeviceKnowledgeSection()
         this.semanticTaskSection()
         this.roleSelector()
         this.connectionSection()
@@ -175,18 +191,56 @@ struct Index {
       }
       .width('100%')
 
+      Row({ space: 8 }) {
+        Button('仅本机')
+          .layoutWeight(1)
+          .backgroundColor(this.knowledgeScope === CrossDeviceQueryScope.LOCAL_ONLY ?
+            $r('app.color.accent') : $r('app.color.surface_muted'))
+          .fontColor(this.knowledgeScope === CrossDeviceQueryScope.LOCAL_ONLY ?
+            Color.White : $r('app.color.text_primary'))
+          .onClick(() => this.knowledgeScope = CrossDeviceQueryScope.LOCAL_ONLY)
+        Button('仅远端')
+          .layoutWeight(1)
+          .backgroundColor(this.knowledgeScope === CrossDeviceQueryScope.REMOTE_ONLY ?
+            $r('app.color.accent') : $r('app.color.surface_muted'))
+          .fontColor(this.knowledgeScope === CrossDeviceQueryScope.REMOTE_ONLY ?
+            Color.White : $r('app.color.text_primary'))
+          .onClick(() => this.knowledgeScope = CrossDeviceQueryScope.REMOTE_ONLY)
+        Button('本机+远端')
+          .layoutWeight(1)
+          .backgroundColor(this.knowledgeScope === CrossDeviceQueryScope.LOCAL_AND_REMOTE ?
+            $r('app.color.accent') : $r('app.color.surface_muted'))
+          .fontColor(this.knowledgeScope === CrossDeviceQueryScope.LOCAL_AND_REMOTE ?
+            Color.White : $r('app.color.text_primary'))
+          .onClick(() => this.knowledgeScope = CrossDeviceQueryScope.LOCAL_AND_REMOTE)
+      }
+      .id('cross-device-query-scope')
+      .width('100%')
+
       TextArea({ placeholder: '输入要在本机知识库检索的问题', text: this.localQuestion })
         .id('local-knowledge-input')
         .height(96)
         .enabled(this.snapshot.knowledgeInitialized && !this.snapshot.knowledgeBusy)
         .maxLength(1000)
         .onChange((value: string) => this.localQuestion = value)
-      Button('查询本机知识库')
+      Button(this.knowledgeScope === CrossDeviceQueryScope.LOCAL_ONLY ?
+        '查询本机知识库' : '查询所选知识范围')
         .id('local-knowledge-query')
         .width('100%')
         .enabled(canQueryKnowledge(this.snapshot, this.localQuestion))
         .onClick(() => this.runKnowledgeCommand(() =>
-          AppRuntime.current().queryLocalKnowledge(this.localQuestion.trim(), this.knowledgeLevel)))
+          AppRuntime.current().queryKnowledge(
+            this.localQuestion.trim(), this.knowledgeLevel, this.knowledgeScope
+          )))
+      if (this.snapshot.knowledgeBusy &&
+        this.knowledgeScope !== CrossDeviceQueryScope.LOCAL_ONLY) {
+        Button('取消跨设备查询')
+          .id('cross-device-query-cancel')
+          .width('100%')
+          .backgroundColor($r('app.color.surface_muted'))
+          .fontColor($r('app.color.status_error'))
+          .onClick(() => AppRuntime.current().cancelKnowledgeQuery())
+      }
 
       Row({ space: 8 }) {
         Button('导入内置文档')
@@ -487,6 +541,153 @@ struct Index {
   }
 
   @Builder
+  crossDeviceKnowledgeSection() {
+    Column({ space: 12 }) {
+      Row() {
+        Column({ space: 3 }) {
+          Text('跨设备知识协作')
+            .fontSize(19)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+          Text(this.collaborationStatus)
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+        Button('刷新')
+          .id('cross-device-refresh')
+          .onClick(() => this.refreshCrossDeviceState())
+      }
+      .width('100%')
+
+      Column({ space: 8 }) {
+        Text('系统可见候选')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+        if (this.collaborationVisibleDevices.length === 0) {
+          Text('暂无系统可见设备')
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+        }
+        ForEach(this.collaborationVisibleDevices, (device: SystemVisibleDevice) => {
+          Row({ space: 8 }) {
+            Text(device.alias)
+              .fontSize(14)
+              .fontColor($r('app.color.text_primary'))
+              .layoutWeight(1)
+            Button('握手')
+              .onClick(() => this.connectCandidate(device))
+          }
+          .width('100%')
+        }, (device: SystemVisibleDevice) => device.alias + '-' + device.deviceType)
+      }
+      .id('visible-device-section')
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+
+      Column({ space: 8 }) {
+        Text('可信设备')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+        if (this.collaborationPeers.length === 0) {
+          Text('暂无已握手的 SemaLink 设备')
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+        }
+        ForEach(this.collaborationPeers, (peer: CollaborationPeer) => {
+          Row({ space: 8 }) {
+            Column({ space: 2 }) {
+              Text(peer.deviceAlias)
+                .fontSize(14)
+                .fontColor($r('app.color.text_primary'))
+              Text(peer.trustState + ' · ' + peer.onlineState)
+                .fontSize(12)
+                .fontColor($r('app.color.text_secondary'))
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+            if (peer.trustState === 'PENDING' || peer.trustState === 'REVOKED') {
+              Button('信任')
+                .onClick(() => this.updatePeerTrust(peer.peerKey, 'TRUSTED'))
+            }
+            if (peer.trustState !== 'BLOCKED') {
+              Button('阻止')
+                .backgroundColor($r('app.color.surface_muted'))
+                .fontColor($r('app.color.text_primary'))
+                .onClick(() => this.updatePeerTrust(peer.peerKey, 'BLOCKED'))
+            } else {
+              Button('撤销')
+                .backgroundColor($r('app.color.surface_muted'))
+                .fontColor($r('app.color.text_primary'))
+                .onClick(() => this.updatePeerTrust(peer.peerKey, 'REVOKED'))
+            }
+          }
+          .width('100%')
+          .padding(10)
+          .backgroundColor($r('app.color.surface'))
+        }, (peer: CollaborationPeer) => peer.peerKey)
+      }
+      .id('trusted-device-section')
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+
+      Row({ space: 10 }) {
+        Column({ space: 2 }) {
+          Text('允许可信设备查询')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_primary'))
+          Text('默认仅 L1，最多 5 条，每条片段 512 字')
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+        Toggle({
+          type: ToggleType.Switch,
+          isOn: this.collaborationSharingEnabled
+        })
+          .id('cross-device-sharing-toggle')
+          .onChange((enabled: boolean) => this.updateSharing(enabled))
+      }
+      .id('sharing-settings-section')
+      .width('100%')
+      .padding(12)
+      .backgroundColor($r('app.color.surface'))
+
+      Column({ space: 6 }) {
+        Text('最近访问与结果来源')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+        if (this.collaborationAccessRecords.length === 0) {
+          Text('暂无跨设备访问记录')
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+        }
+        ForEach(this.collaborationAccessRecords.slice(0, 5), (record: RemoteAccessRecord) => {
+          Text(record.direction + ' · ' + this.peerAlias(record.peerKey) + ' · ' +
+            record.domainSummary + ' · ' + record.status)
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+            .width('100%')
+        }, (record: RemoteAccessRecord) => record.recordId)
+      }
+      .id('cross-device-result-sources')
+      .alignItems(HorizontalAlign.Start)
+      .width('100%')
+    }
+    .id('cross-device-knowledge-section')
+    .alignItems(HorizontalAlign.Start)
+    .width('100%')
+    .padding(16)
+    .backgroundColor($r('app.color.surface_muted'))
+  }
+
+  @Builder
   querySection() {
     Column({ space: 10 }) {
       TextArea({ placeholder: $r('app.string.question_placeholder'), text: this.question })
@@ -660,6 +861,94 @@ struct Index {
       case ConnectionState.WAITING_RESULT: return $r('app.string.status_processing');
       default: return $r('app.string.status_ready');
     }
+  }
+
+  private refreshCrossDeviceState(): void {
+    this.loadCrossDeviceState().catch((): void => {
+      this.collaborationStatus = '跨设备能力暂不可用，本地知识不受影响';
+    });
+  }
+
+  private async loadCrossDeviceState(): Promise<void> {
+    const runtime: CrossDeviceRuntime =
+      await AppRuntime.current().initializeCrossDevice();
+    await runtime.refreshProfiles();
+    const values = await Promise.all([
+      runtime.listPeers(),
+      runtime.listAccessRecords(),
+      runtime.sharingPolicy(),
+      runtime.listVisibleDevices()
+    ]);
+    this.collaborationPeers = values[0] as CollaborationPeer[];
+    this.collaborationAccessRecords = values[1] as RemoteAccessRecord[];
+    const policy: SharingPolicy = values[2] as SharingPolicy;
+    this.collaborationVisibleDevices = values[3] as SystemVisibleDevice[];
+    this.collaborationSharingEnabled = policy.enabled;
+    this.collaborationStatus = this.collaborationPeers.length.toString() +
+      ' 个应用层设备 · 分享' + (policy.enabled ? '已开启' : '已关闭');
+  }
+
+  private updatePeerTrust(peerKey: string,
+    state: 'TRUSTED' | 'BLOCKED' | 'REVOKED'): void {
+    this.changePeerTrust(peerKey, state).catch((): void => {
+      this.collaborationStatus = '设备信任状态更新失败';
+    });
+  }
+
+  private connectCandidate(device: SystemVisibleDevice): void {
+    AppRuntime.current().initializeCrossDevice()
+      .then((runtime: CrossDeviceRuntime): Promise<void> =>
+        runtime.connectCandidate(device)
+      )
+      .then((): void => this.refreshCrossDeviceState())
+      .catch((): void => {
+        this.collaborationStatus = '设备握手失败';
+      });
+  }
+
+  private async changePeerTrust(peerKey: string,
+    state: 'TRUSTED' | 'BLOCKED' | 'REVOKED'): Promise<void> {
+    const runtime: CrossDeviceRuntime =
+      await AppRuntime.current().initializeCrossDevice();
+    if (state === 'TRUSTED') {
+      await runtime.trust(peerKey);
+    } else if (state === 'BLOCKED') {
+      await runtime.block(peerKey);
+    } else {
+      await runtime.revoke(peerKey);
+    }
+    await this.loadCrossDeviceState();
+  }
+
+  private updateSharing(enabled: boolean): void {
+    this.saveSharing(enabled).catch((): void => {
+      this.collaborationStatus = '分享策略更新失败';
+    });
+  }
+
+  private async saveSharing(enabled: boolean): Promise<void> {
+    const runtime: CrossDeviceRuntime =
+      await AppRuntime.current().initializeCrossDevice();
+    const current: SharingPolicy = await runtime.sharingPolicy();
+    await runtime.saveSharingPolicy(new SharingPolicy(
+      enabled,
+      current.requireTrustedPeer,
+      current.allowedLevels,
+      current.maxEvidenceCount,
+      current.maxSnippetChars,
+      current.allowedDomains,
+      current.deniedDomains,
+      Date.now(),
+      current.revision + 1
+    ));
+    await this.loadCrossDeviceState();
+  }
+
+  private peerAlias(peerKey: string): string {
+    const peer: CollaborationPeer | undefined = this.collaborationPeers.find(
+      (item: CollaborationPeer): boolean => item.peerKey === peerKey
+    );
+    return peer?.deviceAlias ?? '已移除设备';
   }
 
   private runCommand(command: () => Promise<void>): void {

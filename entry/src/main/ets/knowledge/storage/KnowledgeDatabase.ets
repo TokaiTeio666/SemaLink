@@ -5,6 +5,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { KnowledgeError } from '../../contracts/knowledge/KnowledgeError';
 import {
   CREATE_DOCUMENTS_V2,
+  COLLABORATION_SCHEMA_STATEMENTS,
   KNOWLEDGE_DATABASE_VERSION,
   migrationStatements
 } from './KnowledgeDatabaseSchema';
@@ -79,6 +80,7 @@ function rollbackAfterFailure(store: relationalStore.RdbStore): void {
 export class KnowledgeDatabase {
   private store?: relationalStore.RdbStore;
   private readonly storeName: string;
+  private transactionTail: Promise<void> = Promise.resolve();
 
   constructor(storeName: string = DEFAULT_STORE_NAME) {
     this.storeName = storeName;
@@ -139,6 +141,9 @@ export class KnowledgeDatabase {
         await store.executeSql("INSERT OR IGNORE INTO knowledge_metadata(metadata_key, metadata_value) VALUES ('index_version','index-empty')");
         await store.executeSql("INSERT OR IGNORE INTO knowledge_metadata(metadata_key, metadata_value) VALUES ('profile_version','profile-empty')");
         await store.executeSql("INSERT OR IGNORE INTO knowledge_metadata(metadata_key, metadata_value) VALUES ('last_imported_at','0')");
+        for (const collaborationStatement of COLLABORATION_SCHEMA_STATEMENTS) {
+          await store.executeSql(collaborationStatement);
+        }
         stage = 'CREATE_SUPPORT_INDEXES';
         logStage(stage);
         await ensureSupportIndexes(store);
@@ -182,6 +187,29 @@ export class KnowledgeDatabase {
       throw new KnowledgeError('E_INDEX_NOT_READY', 'Local knowledge database is not initialized', true);
     }
     return this.store;
+  }
+
+  runSerializedTransaction(operation: (store: relationalStore.RdbStore) => Promise<void>): Promise<void> {
+    const next: Promise<void> = this.transactionTail.then(
+      (): Promise<void> => this.executeTransaction(operation),
+      (): Promise<void> => this.executeTransaction(operation)
+    );
+    this.transactionTail = next.catch((): void => {});
+    return next;
+  }
+
+  private async executeTransaction(
+    operation: (store: relationalStore.RdbStore) => Promise<void>): Promise<void> {
+    const store: relationalStore.RdbStore = this.getStore();
+    store.beginTransaction();
+    try {
+      await operation(store);
+      store.commit();
+    } catch (error) {
+      rollbackAfterFailure(store);
+      throw error instanceof Error ? error :
+        new KnowledgeError('E_STORAGE_FAILED', 'Serialized storage transaction failed', true);
+    }
   }
 
   close(): void {

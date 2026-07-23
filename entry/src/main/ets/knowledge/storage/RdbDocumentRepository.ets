@@ -167,10 +167,9 @@ export class RdbDocumentRepository implements DocumentRepository, KnowledgeCandi
   }
 
   async saveDocumentWithChunks(document: KnowledgeDocument, chunks: DocumentChunk[]): Promise<void> {
-    const store = this.database.getStore();
     try {
-      store.beginTransaction();
-      const documentValues: relationalStore.ValuesBucket = {
+      await this.database.runSerializedTransaction(async (store: relationalStore.RdbStore): Promise<void> => {
+        const documentValues: relationalStore.ValuesBucket = {
         document_id: document.documentId,
         title: document.title,
         modality: document.modality,
@@ -180,10 +179,10 @@ export class RdbDocumentRepository implements DocumentRepository, KnowledgeCandi
         created_at: document.createdAt,
         updated_at: document.updatedAt,
         privacy_level: document.privacyLevel
-      };
-      await store.insert('documents', documentValues);
-      for (const chunk of chunks) {
-        const chunkValues: relationalStore.ValuesBucket = {
+        };
+        await store.insert('documents', documentValues);
+        for (const chunk of chunks) {
+          const chunkValues: relationalStore.ValuesBucket = {
           chunk_id: chunk.chunkId,
           document_id: chunk.documentId,
           chunk_index: chunk.chunkIndex,
@@ -193,12 +192,11 @@ export class RdbDocumentRepository implements DocumentRepository, KnowledgeCandi
           start_offset: chunk.startOffset,
           end_offset: chunk.endOffset,
           updated_at: chunk.updatedAt
-        };
-        await store.insert('document_chunks', chunkValues);
-      }
-      store.commit();
+          };
+          await store.insert('document_chunks', chunkValues);
+        }
+      });
     } catch (error) {
-      rollbackAfterFailure(store);
       throw storageOperationError();
     }
   }
@@ -269,20 +267,16 @@ export class RdbDocumentRepository implements DocumentRepository, KnowledgeCandi
   }
 
   async clearAll(): Promise<void> {
-    let store: relationalStore.RdbStore | undefined = undefined;
     try {
-      store = this.database.getStore();
-      store.beginTransaction();
-      await store.executeSql('DELETE FROM document_chunks');
-      await store.executeSql('DELETE FROM documents');
-      store.commit();
-      await this.setMetadata({
-        indexState: 'EMPTY', indexVersion: 'index-empty', profileVersion: 'profile-empty', updatedAt: Date.now()
+      await this.database.runSerializedTransaction(async (store: relationalStore.RdbStore): Promise<void> => {
+        await store.executeSql('DELETE FROM document_chunks');
+        await store.executeSql('DELETE FROM documents');
+        await this.writeMetadata(store, {
+          indexState: 'EMPTY', indexVersion: 'index-empty',
+          profileVersion: 'profile-empty', updatedAt: Date.now()
+        });
       });
     } catch (error) {
-      if (store !== undefined) {
-        rollbackAfterFailure(store);
-      }
       throw storageOperationError();
     }
   }
@@ -335,17 +329,11 @@ export class RdbDocumentRepository implements DocumentRepository, KnowledgeCandi
   }
 
   async setMetadata(metadata: KnowledgeMetadata): Promise<void> {
-    let store: relationalStore.RdbStore | undefined = undefined;
-    let transactionStarted = false;
     try {
-      store = this.database.getStore();
-      store.beginTransaction();
-      transactionStarted = true;
-      await this.writeMetadata(store, metadata);
-      store.commit();
-      transactionStarted = false;
+      await this.database.runSerializedTransaction(
+        (store: relationalStore.RdbStore): Promise<void> =>
+          this.writeMetadata(store, metadata));
     } catch (error) {
-      if (transactionStarted && store !== undefined) rollbackAfterFailure(store);
       throw storageOperationError();
     }
   }

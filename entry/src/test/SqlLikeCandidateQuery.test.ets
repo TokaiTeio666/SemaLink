@@ -136,6 +136,19 @@ export default function sqlLikeCandidateQueryTest() {
       expect(query === undefined).assertFalse();
     });
 
+    it('normalizes tag filter bind values without embedding raw domains in SQL', 0, () => {
+      const rawDomain = 'HarmonyOS UI';
+      const query = buildSqlLikeCandidateQuery({
+        queryText: 'HarmonyOS UI', topK: 5, privacyLevel: 'PRIVATE_GROUP',
+        filters: { tags: [rawDomain] }
+      });
+      expect(query?.sql.includes(rawDomain)).assertFalse();
+      expect(query?.sql.includes('CHAR(9)')).assertTrue();
+      expect(query?.sql.includes('CHAR(10)')).assertTrue();
+      expect((query?.bindArgs.indexOf(JSON.stringify('harmonyos ui')) ?? -1) >= 0)
+        .assertTrue();
+    });
+
     it('accepts all exact request and filter boundaries', 0, () => {
       const query = buildSqlLikeCandidateQuery({
         queryText: 'q'.repeat(1000), topK: 20, privacyLevel: 'PRIVATE_GROUP',

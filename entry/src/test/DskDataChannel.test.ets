@@ -24,5 +24,32 @@ export default function dskDataChannelTest(): void {
       }
       expect(received).assertEqual(text);
     });
+
+    it('rejects logical messages above the reassembly limit', 0, async () => {
+      const channel = new DskDataChannel(new TestHub());
+      let rejected: boolean = false;
+      try {
+        await channel.send('peer', 'x'.repeat(64 * 1024 + 1));
+      } catch (_) {
+        rejected = true;
+      }
+      expect(rejected).assertTrue();
+    });
+
+    it('replays completed messages received before handler installation in order', 0, async () => {
+      const fakeHub = new TestHub();
+      const channel = new DskDataChannel(fakeHub);
+      await channel.send('peer', 'HELLO');
+      await channel.send('peer', 'PROFILE_DIGEST');
+      fakeHub.sent.forEach((frame: Object): void => fakeHub.handler?.('peer', frame));
+
+      const received: string[] = [];
+      channel.onMessage('peer', (text: string): void => {
+        received.push(text);
+      });
+      expect(JSON.stringify(received)).assertEqual(
+        JSON.stringify(['HELLO', 'PROFILE_DIGEST'])
+      );
+    });
   });
 }

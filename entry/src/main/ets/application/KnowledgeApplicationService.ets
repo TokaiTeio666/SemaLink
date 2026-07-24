@@ -33,7 +33,11 @@ export class KnowledgeApplicationService implements LocalKnowledgeGateway, Seman
       return;
     }
     if (this.initialization === undefined) {
-      this.initialization = this.initializeComponents(context, sourceDeviceId);
+      this.initialization = this.initializeComponents(context, sourceDeviceId)
+        .catch((error: Object): Promise<void> => {
+          this.initialization = undefined;
+          return Promise.reject(error);
+        });
     }
     await this.initialization;
   }
@@ -111,6 +115,13 @@ export class KnowledgeApplicationService implements LocalKnowledgeGateway, Seman
       throw this.notInitialized();
     }
     return this.provider.getProfile();
+  }
+
+  collaborationDatabase(): KnowledgeDatabase {
+    if (this.database === undefined) {
+      throw this.notInitialized();
+    }
+    return this.database;
   }
 
   destroy(): void {

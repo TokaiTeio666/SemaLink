@@ -34,6 +34,15 @@ import {
   LocalKnowledgeResult
 } from '../contracts/knowledge/KnowledgeModels';
 import { EvidenceUnit, TaskRequest } from '../contracts/semantic/SemanticModels';
+import { RuntimeBootstrap } from './RuntimeBootstrap';
+import { CrossDeviceRuntime } from '../crossdevice/runtime/CrossDeviceRuntime';
+import {
+  CrossDeviceKnowledgeQueryResult,
+  CrossDeviceQueryScope
+} from '../crossdevice/application/CrossDeviceKnowledgeQueryService';
+import { DisplayKnowledgeItem } from '../application/KnowledgeQueryDisplayState';
+import { CollaborationPeer } from '../crossdevice/model/CollaborationModels';
+import { tokenizeQuery } from '../knowledge/retrieval/QueryTokenizer';
 
 class RuntimeCoordinatorTransport implements CoordinatorTransport {
   private readonly pool: PeerConnectionPool | undefined;
@@ -62,6 +71,7 @@ export interface RuntimeDependencies {
   transport?: Transport;
   resolverFactory?: ResolverFactory;
   knowledgeProvider?: SemanticKnowledgeProvider;
+  knowledgeRuntime?: RuntimeBootstrap;
 }
 
 export class AppRuntime {
@@ -85,12 +95,19 @@ export class AppRuntime {
   readonly controlHub: DskControlHub | undefined;
   readonly connectionPool: PeerConnectionPool | undefined;
   private readonly ownedKnowledgeService: KnowledgeApplicationService;
+  private readonly ownsKnowledgeService: boolean;
+  private readonly knowledgeRuntime?: RuntimeBootstrap;
   private readonly context: common.UIAbilityContext;
+  private readonly crossDeviceIngressHub: DskControlHub;
   private knowledgeInitialization?: Promise<void>;
+  private crossDeviceInitialization?: Promise<CrossDeviceRuntime>;
+  private crossDevice?: CrossDeviceRuntime;
+  private currentKnowledgeTaskId: string | undefined = undefined;
 
   constructor(context: common.UIAbilityContext, dependencies: RuntimeDependencies = {}) {
     this.context = context;
     const bundleName: string = context.applicationInfo.name;
+    this.crossDeviceIngressHub = new DskControlHub(context, bundleName, new Logger());
     const transport: Transport = dependencies.transport ??
       new CollaborationTransport(context, bundleName, new Logger());
     const codec: ProtocolCodec = new ProtocolCodec();
@@ -98,8 +115,10 @@ export class AppRuntime {
       transport, codec, new SequenceIdGenerator(), new SystemScheduler(), 3000, 10000
     );
     this.store = new AppStateStore();
-    this.knowledge = new KnowledgeApplicationService();
+    this.knowledgeRuntime = dependencies.knowledgeRuntime;
+    this.knowledge = dependencies.knowledgeRuntime?.knowledgeService() ?? new KnowledgeApplicationService();
     this.ownedKnowledgeService = this.knowledge;
+    this.ownsKnowledgeService = dependencies.knowledgeRuntime === undefined;
     const resolverFactory: ResolverFactory = dependencies.resolverFactory ??
       (() => new TrustedDeviceResolver(new DistributedDeviceProvider(bundleName)));
     if (dependencies.knowledgeProvider !== undefined) {
@@ -148,7 +167,11 @@ export class AppRuntime {
   async initializeKnowledge(context?: common.UIAbilityContext): Promise<void> {
     if (context !== undefined) {
       if (this.knowledgeInitialization === undefined) {
-        this.knowledgeInitialization = this.prepareKnowledge(context);
+        this.knowledgeInitialization = this.prepareKnowledge(context)
+          .catch((error: Object): Promise<void> => {
+            this.knowledgeInitialization = undefined;
+            return Promise.reject(error);
+          });
       }
       await this.knowledgeInitialization;
       return;
@@ -157,6 +180,35 @@ export class AppRuntime {
       return;
     }
     await this.ownedKnowledgeService.initialize(this.context, 'local-device');
+  }
+
+  initializeCrossDevice(): Promise<CrossDeviceRuntime> {
+    if (this.crossDevice !== undefined) {
+      return Promise.resolve(this.crossDevice);
+    }
+    if (this.crossDeviceInitialization === undefined) {
+      this.crossDeviceInitialization = CrossDeviceRuntime.create(
+        this.context,
+        this.knowledge.collaborationDatabase(),
+        this.knowledgeProvider,
+        this.crossDeviceIngressHub
+      ).then((runtime: CrossDeviceRuntime): CrossDeviceRuntime => {
+        if (this.destroyed) {
+          runtime.destroy();
+          throw new Error('Cross-device runtime destroyed during initialization');
+        }
+        this.crossDevice = runtime;
+        return runtime;
+      }).catch((error: Object): Promise<CrossDeviceRuntime> => {
+        this.crossDeviceInitialization = undefined;
+        return Promise.reject(error);
+      });
+    }
+    return this.crossDeviceInitialization;
+  }
+
+  currentCrossDeviceRuntime(): CrossDeviceRuntime | undefined {
+    return this.crossDevice;
   }
 
   async importBuiltInKnowledge(): Promise<void> {
@@ -225,6 +277,106 @@ export class AppRuntime {
     }
   }
 
+  async queryKnowledge(question: string, level: KnowledgePayloadLevel,
+    scope: CrossDeviceQueryScope): Promise<void> {
+    if (scope === CrossDeviceQueryScope.LOCAL_ONLY) {
+      await this.queryLocalKnowledge(question, level);
+      return;
+    }
+    this.store.update({
+      knowledgeBusy: true,
+      knowledgeMessage: '正在检索本地与可信设备知识',
+      knowledgeQueryStatus: 'QUERYING',
+      knowledgeLevel: level,
+      knowledgeItems: [],
+      knowledgeRetrievalMs: 0,
+      knowledgeTruncated: false,
+      knowledgeError: ''
+    });
+    const startedAtMs: number = Date.now();
+    const taskId: string = 'knowledge-' + startedAtMs;
+    this.currentKnowledgeTaskId = taskId;
+    try {
+      const crossDevice: CrossDeviceRuntime = await this.initializeCrossDevice();
+      if (this.currentKnowledgeTaskId !== taskId) {
+        return;
+      }
+      const concepts: string[] = tokenizeQuery(question).slice(0, 16);
+      const task: TaskRequest = {
+        semanticContractVersion: '1.0',
+        taskId: taskId,
+        queryText: question.trim(),
+        requiredConcepts: concepts.length > 0 ? concepts : [question.trim()],
+        requiredConfidence: 0.8,
+        coverageThreshold: 0.8,
+        latencyBudgetMs: 5000,
+        byteBudget: 64 * 1024,
+        privacyLevel: 'PRIVATE_GROUP',
+        acceptableLevels: [level]
+      };
+      const result: CrossDeviceKnowledgeQueryResult =
+        await crossDevice.queries.query(task, scope);
+      if (this.currentKnowledgeTaskId !== task.taskId) {
+        return;
+      }
+      const peers: CollaborationPeer[] = await crossDevice.listPeers();
+      const aliases: Map<string, string> = new Map<string, string>();
+      peers.forEach((peer: CollaborationPeer): void => {
+        aliases.set(peer.peerKey, peer.deviceAlias);
+      });
+      const items: DisplayKnowledgeItem[] = result.evidence.map(
+        (evidence: EvidenceUnit): DisplayKnowledgeItem => {
+          const alias: string = aliases.get(evidence.sourceDeviceId) ??
+            (evidence.sourceDeviceId === 'local-device' ? '本机' : '可信设备');
+          return {
+            title: evidence.title,
+            relevance: evidence.relevance,
+            content: evidence.summary ?? evidence.snippet ?? '',
+            kind: evidence.level === 'L1' ? '摘要' : '命中段落',
+            chunkLabel: alias
+          };
+        }
+      );
+      const sources: string[] = [];
+      items.forEach((item: DisplayKnowledgeItem): void => {
+        if (sources.indexOf(item.chunkLabel) < 0) {
+          sources.push(item.chunkLabel);
+        }
+      });
+      const retrievalMs: number = Math.max(0, Date.now() - startedAtMs);
+      this.store.update({
+        knowledgeBusy: false,
+        knowledgeMessage: '命中 ' + items.length + ' 条，来源 ' + sources.join('、'),
+        knowledgeQueryStatus: items.length === 0 ? 'EMPTY' : 'SUCCESS',
+        knowledgeItems: items,
+        knowledgeRetrievalMs: retrievalMs,
+        evidenceSourceDeviceIds: sources,
+        knowledgeTruncated: false,
+        knowledgeError: result.failures.join(',')
+      });
+      this.currentKnowledgeTaskId = undefined;
+    } catch (error) {
+      this.currentKnowledgeTaskId = undefined;
+      this.publishKnowledgeError(error as Object, true);
+      throw new Error('Cross-device knowledge query failed');
+    }
+  }
+
+  cancelKnowledgeQuery(): void {
+    const taskId: string | undefined = this.currentKnowledgeTaskId;
+    if (taskId === undefined) {
+      return;
+    }
+    this.currentKnowledgeTaskId = undefined;
+    this.crossDevice?.queries.cancel(taskId);
+    this.store.update({
+      knowledgeBusy: false,
+      knowledgeMessage: '跨设备查询已取消',
+      knowledgeQueryStatus: 'IDLE',
+      knowledgeError: ''
+    });
+  }
+
   async runTlsProbe(): Promise<void> {
     if (this.tlsProbeRunning) {
       return;
@@ -257,9 +409,9 @@ export class AppRuntime {
     }
   }
 
-  static initialize(context: common.UIAbilityContext): AppRuntime {
+  static initialize(context: common.UIAbilityContext, dependencies: RuntimeDependencies = {}): AppRuntime {
     if (AppRuntime.active === null) {
-      AppRuntime.active = new AppRuntime(context);
+      AppRuntime.active = new AppRuntime(context, dependencies);
     }
     return AppRuntime.active;
   }
@@ -280,6 +432,13 @@ export class AppRuntime {
   }
 
   acceptCollaboration(wantParam: Record<string, Object>): boolean {
+    if (this.crossDevice?.accept(wantParam) === true) {
+      return true;
+    }
+    if (this.crossDevice === undefined && this.crossDeviceIngressHub.accept(wantParam)) {
+      this.initializeCrossDevice().catch((): void => {});
+      return true;
+    }
     if (this.tls !== undefined && this.tls.accept(wantParam)) {
       return true;
     }
@@ -294,8 +453,14 @@ export class AppRuntime {
     this.multiDeviceCoordinator.destroy();
     this.peerTaskResponder.destroy();
     this.coordinator.destroy();
+    this.crossDevice?.destroy();
+    this.crossDevice = undefined;
+    this.crossDeviceInitialization = undefined;
+    this.crossDeviceIngressHub.destroy();
     this.tls?.destroy().catch((): void => { });
-    this.ownedKnowledgeService.destroy();
+    if (this.ownsKnowledgeService) {
+      this.ownedKnowledgeService.destroy();
+    }
   }
 
   private createTlsCoordinator(context: common.UIAbilityContext, bundleName: string): Task3TlsCoordinator | undefined {
@@ -309,7 +474,11 @@ export class AppRuntime {
   private async prepareKnowledge(context: common.UIAbilityContext): Promise<void> {
     this.store.update({ knowledgeBusy: true, knowledgeMessage: '正在初始化知识库', knowledgeError: '' });
     try {
-      await this.knowledge.initialize(context);
+      if (this.knowledgeRuntime !== undefined) {
+        await this.knowledgeRuntime.ensureInitialized(context);
+      } else {
+        await this.knowledge.initialize(context);
+      }
       const profile: KnowledgeProfile = await this.knowledge.getKnowledgeProfile();
       if (profile.indexState === 'EMPTY') {
         await this.knowledge.importBuiltInDocuments();
@@ -332,6 +501,7 @@ export class AppRuntime {
       knowledgeMessage: message,
       knowledgeError: ''
     });
+    this.crossDevice?.refreshProfiles().catch((): void => {});
   }
 
   private publishKnowledgeError(error: Object, queryFailure: boolean = false): void {

@@ -279,6 +279,29 @@ export default function deviceSemanticRouterTest(): void {
       expect(result.routed[1].candidate.snapshot.deviceId).assertEqual('remote-b');
     });
 
+    it('matches domains case-insensitively and exposes the profile display value', 0, () => {
+      const harmony = candidate(remoteSnapshot('peer-b', 'B', NOW_MS),
+        remoteProfile('peer-b', 'B', ['HarmonyOS', 'ArkTS'], NOW_MS));
+      const database = candidate(remoteSnapshot('peer-c', 'C', NOW_MS),
+        remoteProfile('peer-c', 'C', ['Database'], NOW_MS));
+      const result = router.route(taskRequest(['harmonyos']), [database, harmony], NOW_MS);
+
+      expect(result.routed[0].candidate.snapshot.deviceId).assertEqual('peer-b');
+      expect(result.routed[0].scores.semanticMatch).assertEqual(1);
+      expect(result.routed[0].matchedDomain).assertEqual('HarmonyOS');
+      expect(result.routed[0].normalizedMatchedDomain).assertEqual('harmonyos');
+    });
+
+    it('leaves matchedDomain empty when no profile domain contributes', 0, () => {
+      const harmony = candidate(remoteSnapshot('peer-b', 'B', NOW_MS),
+        remoteProfile('peer-b', 'B', ['HarmonyOS'], NOW_MS));
+      const result = router.route(taskRequest(['unrelated']), [harmony], NOW_MS);
+
+      expect(result.routed[0].scores.semanticMatch).assertEqual(0);
+      expect(result.routed[0].matchedDomain).assertEqual('');
+      expect(result.routed[0].normalizedMatchedDomain).assertEqual('');
+    });
+
     it('exposesSubscoresInRoutingResult', 0, () => {
       const task: TaskRequest = taskRequest(['操作系统']);
       const local: DeviceRoutingCandidate = candidate(localSnapshot(),

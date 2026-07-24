@@ -2,6 +2,8 @@ import { relationalStore } from '@kit.ArkData';
 import { analyzeQuery, QueryAnalysis } from '../retrieval/QueryTokenizer';
 import { KnowledgeRetrievalRequest } from '../retrieval/RetrievalEngine';
 import { validateKnowledgeRetrievalRequest } from '../retrieval/KnowledgeRetrievalRequestValidator';
+import { normalizeKnowledgeDomain } from
+  '../../contracts/semantic/KnowledgeDomainNormalizer';
 
 export const MAX_SQL_LIKE_SEARCH_TERMS: number = 32;
 const MAX_SQL_LIKE_PRIMARY_TERMS: number = 8;
@@ -69,6 +71,16 @@ function placeholders(count: number): string {
     values.push('?');
   }
   return values.join(',');
+}
+
+function normalizedTagsJsonSql(): string {
+  let expression: string = "REPLACE(REPLACE(REPLACE(REPLACE(d.tags_json,'　',' ')," +
+    "CHAR(9),' '),CHAR(10),' '),CHAR(13),' ')";
+  for (let pass: number = 0; pass < 6; pass++) {
+    expression = "REPLACE(" + expression + ",'  ',' ')";
+  }
+  expression = "REPLACE(REPLACE(" + expression + ",'\" ','\"'),' \"','\"')";
+  return 'LOWER(' + expression + ')';
 }
 
 function scoreForTerm(primary: boolean): string {
@@ -147,8 +159,8 @@ export function buildSqlLikeCandidateQuery(request: KnowledgeRetrievalRequest): 
   }
   if (filters?.tags !== undefined && filters.tags.length > 0) {
     for (const value of filters.tags) {
-      where.push('INSTR(d.tags_json,?)>0');
-      bindArgs.push(JSON.stringify(value));
+      where.push('INSTR(' + normalizedTagsJsonSql() + ',?)>0');
+      bindArgs.push(JSON.stringify(normalizeKnowledgeDomain(value)));
     }
   }
   if (filters?.modalities !== undefined && filters.modalities.length > 0) {

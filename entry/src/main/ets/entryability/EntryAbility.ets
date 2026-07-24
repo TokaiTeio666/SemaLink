@@ -4,6 +4,8 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { AppRuntime } from '../runtime/AppRuntime';
+import { PROCESS_RUNTIME_BOOTSTRAP } from '../runtime/RuntimeBootstrap';
+import { publicFrameworkErrorCode } from '../common/PublicErrorSanitizer';
 
 const DOMAIN = 0x0000;
 
@@ -22,13 +24,16 @@ export default class EntryAbility extends UIAbility {
     try {
       this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
     } catch (err) {
-      hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
+      hilog.error(DOMAIN, 'testTag', 'event=set_color_mode_failed code=%{public}s',
+        publicFrameworkErrorCode(err as Object));
     }
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
 
-    const runtime: AppRuntime = AppRuntime.initialize(this.context);
-    runtime.initializeKnowledge(this.context).catch((error: Object) => {
-      hilog.error(DOMAIN, 'testTag', 'Knowledge initialization failed. Cause: %{public}s', JSON.stringify(error));
+    const runtime: AppRuntime = AppRuntime.initialize(this.context, {
+      knowledgeRuntime: PROCESS_RUNTIME_BOOTSTRAP
+    });
+    runtime.initializeKnowledge(this.context).catch((_error: Object) => {
+      hilog.error(DOMAIN, 'testTag', 'Knowledge initialization failed');
     });
   }
 
@@ -49,12 +54,13 @@ export default class EntryAbility extends UIAbility {
 
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
-        hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
+        hilog.error(DOMAIN, 'testTag', 'event=load_content_failed code=%{public}s',
+          publicFrameworkErrorCode(err));
         return;
       }
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
-      AppRuntime.current().initializeKnowledge(this.context).catch((error: Error) => {
-        hilog.error(DOMAIN, 'testTag', 'Knowledge initialization failed: %{public}s', error.message);
+      AppRuntime.current().initializeKnowledge(this.context).catch((_error: Error) => {
+        hilog.error(DOMAIN, 'testTag', 'Knowledge initialization failed');
       });
       this.requestDistributedPermission()
         .then((granted: boolean) => {
@@ -106,8 +112,8 @@ export default class EntryAbility extends UIAbility {
       const businessError: BusinessError = err as BusinessError;
       this.distributedPermissionGranted = false;
       this.permissionRequestFinished = true;
-      hilog.error(DOMAIN, 'testTag', 'distributed_permission_denied: code=%{public}d message=%{public}s',
-        businessError.code, businessError.message);
+      hilog.error(DOMAIN, 'testTag', 'event=distributed_permission_denied code=%{public}s',
+        publicFrameworkErrorCode(businessError));
       return false;
     }
   }

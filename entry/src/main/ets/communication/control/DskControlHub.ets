@@ -24,7 +24,8 @@ export class DskControlHub implements DskDataTransport {
   private readonly terminalStates = new Map<string, ControlChannelState>();
   private readonly codec = new ControlCodec(); private destroyed = false;
   private readonly dataHandlers = new Set<DskDataMessageHandler>();
-  private readonly context: common.UIAbilityContext; private readonly bundleName: string; private readonly logger: Logger; private readonly api: CollaborationApi; private readonly listener: DskControlHubListener | null;
+  private readonly pendingData: Array<[string, Object]> = [];
+  private readonly context: common.UIAbilityContext; private readonly bundleName: string; private readonly logger: Logger; private readonly api: CollaborationApi; private listener: DskControlHubListener | null;
   constructor(context: common.UIAbilityContext, bundleName: string, logger: Logger, api?: CollaborationApi, listener?: DskControlHubListener) { this.context = context; this.bundleName = bundleName; this.logger = logger; this.api = api ?? new ProductionCollaborationApi(); this.listener = listener ?? null; }
   async connect(peer: PeerDevice): Promise<void> {
     if (this.destroyed) throw new AppError('E_TRANSPORT_DESTROYED', 'transport destroyed', ErrorStage.CONNECTION, false);
@@ -55,7 +56,12 @@ export class DskControlHub implements DskDataTransport {
     if (utf8ByteLength(text) > 1024) throw new AppError('E_CONTROL_FRAME_TOO_LARGE', 'data frame exceeds limit', ErrorStage.PROTOCOL, false);
     await this.api.send(session.id, text);
   }
-  onDataMessage(handler: DskDataMessageHandler): void { this.dataHandlers.add(handler); }
+  onDataMessage(handler: DskDataMessageHandler): void {
+    this.dataHandlers.add(handler);
+    const pending: Array<[string, Object]> = this.pendingData.splice(0);
+    pending.forEach((item: [string, Object]): void => handler(item[0], item[1]));
+  }
+  setListener(listener: DskControlHubListener | null): void { this.listener = listener; }
   async disconnect(deviceId: string): Promise<void> { const list = this.sessionsByDevice.get(deviceId) ?? []; list.slice().forEach((s: Session) => this.remove(s, true)); }
   deviceIds(): string[] { const ids: string[] = []; for (const deviceId of this.sessionsByDevice.keys()) ids.push(deviceId); ids.sort(); return ids; }
   stateOf(deviceId: string): ControlChannelState { const list = this.sessionsByDevice.get(deviceId) ?? []; if (list.some((s: Session) => s.state === 'READY')) return 'READY'; if (list.some((s: Session) => s.state === 'CONNECTING')) return 'CONNECTING'; return this.terminalStates.get(deviceId) ?? 'DISCONNECTED'; }
@@ -74,7 +80,7 @@ export class DskControlHub implements DskDataTransport {
     const list = this.sessionsByDevice.get(deviceId) ?? [];
     return list.find((session: Session) => session.state === 'READY');
   }
-  private message(id: number, text: string): void { const d = this.deviceBySession.get(id); if (d === undefined) return; const s = (this.sessionsByDevice.get(d) ?? []).find((x: Session) => x.id === id); if (s === undefined) return; try { const parsed = JSON.parse(text) as Object; if (parsed !== null && typeof parsed === 'object' && (parsed as Record<string, Object>)['channel'] === 'DATA') { this.logger.info('DSK_DATA_FRAME_RECEIVED', 'device=' + d.slice(-4)); this.dataHandlers.forEach((handler: DskDataMessageHandler): void => handler(d, parsed)); return; } const e = this.codec.decode(text); if (s.seen.has(e.messageId)) return; s.seen.add(e.messageId); this.listener?.onControlMessage(d, e); } catch (_) { this.fail(id, new AppError('E_CONTROL_INVALID', 'invalid control message', ErrorStage.PROTOCOL, false)); } }
+  private message(id: number, text: string): void { const d = this.deviceBySession.get(id); if (d === undefined) return; const s = (this.sessionsByDevice.get(d) ?? []).find((x: Session) => x.id === id); if (s === undefined) return; try { const parsed = JSON.parse(text) as Object; if (parsed !== null && typeof parsed === 'object' && (parsed as Record<string, Object>)['channel'] === 'DATA') { this.logger.info('DSK_DATA_FRAME_RECEIVED', 'device=' + d.slice(-4)); if (this.dataHandlers.size === 0) { if (this.pendingData.length < 128) this.pendingData.push([d, parsed]); } else { this.dataHandlers.forEach((handler: DskDataMessageHandler): void => handler(d, parsed)); } return; } const e = this.codec.decode(text); if (s.seen.has(e.messageId)) return; s.seen.add(e.messageId); this.listener?.onControlMessage(d, e); } catch (_) { this.fail(id, new AppError('E_CONTROL_INVALID', 'invalid control message', ErrorStage.PROTOCOL, false)); } }
   private closed(id: number, info: SessionEventInfo): void { const d = this.deviceBySession.get(id); if (d === undefined) return; this.fail(id, new AppError('E_SESSION_CLOSED', 'session closed', ErrorStage.CONNECTION, true, info.reason)); }
   private fail(id: number, error: AppError): void { const d = this.deviceBySession.get(id); if (d === undefined) return; const s = (this.sessionsByDevice.get(d) ?? []).find((x: Session) => x.id === id); if (s === undefined) return; s.state = 'FAILED'; this.terminalStates.set(d, 'FAILED'); this.listener?.onControlClosed(d, error); this.remove(s, false); }
   private remove(s: Session, disconnect: boolean): void { this.api.offAll(s.id); if (disconnect) this.api.disconnect(s.id); this.api.destroy(s.id); const list = this.sessionsByDevice.get(s.device.deviceId) ?? []; const index = list.findIndex((x: Session) => x.id === s.id); if (index >= 0) list.splice(index, 1); if (list.length === 0) this.sessionsByDevice.delete(s.device.deviceId); this.deviceBySession.delete(s.id); if (disconnect) this.terminalStates.set(s.device.deviceId, 'DISCONNECTED'); }

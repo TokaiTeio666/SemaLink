@@ -67,7 +67,7 @@ export default function knowledgeDatabaseTest() {
       }
     });
 
-    it('initializes a fresh unique store to v2 and reuses the initialized connection', 0, async () => {
+    it('initializes a fresh unique store to v3 and reuses the initialized connection', 0, async () => {
       const ability = await abilityDelegatorRegistry.getAbilityDelegator().getCurrentTopAbility();
       const context = ability.context;
       const storeName = 'semalink_fresh_initialize_' + Date.now().toString() + '.db';
@@ -75,7 +75,7 @@ export default function knowledgeDatabaseTest() {
         const database = new KnowledgeDatabase(storeName);
         await database.initialize(context);
         const firstStore = database.getStore();
-        expect(firstStore.version).assertEqual(2);
+        expect(firstStore.version).assertEqual(3);
         await database.initialize(context);
         expect(database.getStore()).assertEqual(firstStore);
         database.close();
@@ -127,7 +127,7 @@ export default function knowledgeDatabaseTest() {
           name: storeName, securityLevel: relationalStore.SecurityLevel.S1
         });
         await future.executeSql(CREATE_DOCUMENTS_V2);
-        future.version = 3;
+        future.version = 4;
         future.close();
 
         const database = new KnowledgeDatabase(storeName);
@@ -139,10 +139,10 @@ export default function knowledgeDatabaseTest() {
           name: storeName, securityLevel: relationalStore.SecurityLevel.S1
         });
         expect(corrected.version).assertEqual(3);
-        corrected.version = 2;
+        corrected.version = 3;
         corrected.close();
         await database.initialize(context);
-        expect(database.getStore().version).assertEqual(2);
+        expect(database.getStore().version).assertEqual(3);
         database.close();
       } finally {
         await relationalStore.deleteRdbStore(context, storeName);
@@ -248,7 +248,7 @@ export default function knowledgeDatabaseTest() {
       expect(empty.chunkCount).assertEqual(0);
     });
 
-    it('migrates a real v1 store to v2 without losing documents or chunks', 0, async () => {
+    it('migrates a real v1 store to v3 without losing documents or chunks', 0, async () => {
       const ability = await abilityDelegatorRegistry.getAbilityDelegator().getCurrentTopAbility();
       const context = ability.context;
       const storeName = 'semalink_knowledge_v1_migration_' + Date.now().toString() + '.db';
@@ -316,7 +316,7 @@ export default function knowledgeDatabaseTest() {
 
         const recovered = new KnowledgeDatabase(storeName);
         await recovered.initialize(context);
-        expect(recovered.getStore().version).assertEqual(2);
+        expect(recovered.getStore().version).assertEqual(3);
         const documents = await readDocuments(recovered);
         expect(documents.length).assertEqual(1);
         expect(documents[0].privacyLevel).assertEqual('PRIVATE_GROUP');
@@ -341,7 +341,7 @@ export default function knowledgeDatabaseTest() {
 
         const migrated = new KnowledgeDatabase(storeName);
         await migrated.initialize(context);
-        expect(migrated.getStore().version).assertEqual(2);
+        expect(migrated.getStore().version).assertEqual(3);
         const documents = await readDocuments(migrated);
         expect(documents.length).assertEqual(1);
         expect(documents[0].documentId).assertEqual('v0-doc');

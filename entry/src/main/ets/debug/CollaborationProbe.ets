@@ -7,19 +7,13 @@ import { CollaborationTransport } from '../communication/CollaborationTransport'
 import { TransportListener } from '../communication/Transport';
 import { PeerDevice } from '../model/AppModels';
 import { DistributedDeviceProvider, TrustedDeviceResolver } from '../communication/TrustedDeviceResolver';
+import {
+  CrossDevicePingPongSpikeCodec,
+  CrossDeviceSpikeMessage
+} from './CrossDevicePingPongSpike';
 
 const TAG = 'CollaborationProbe';
 const PING_TIMEOUT_MS = 10000;
-
-class ProbeMessage {
-  type: string = '';
-  probeId: string = '';
-
-  constructor(type: string, probeId: string) {
-    this.type = type;
-    this.probeId = probeId;
-  }
-}
 
 class InitiatorListener implements TransportListener {
   private probe: CollaborationProbe;
@@ -34,13 +28,13 @@ class InitiatorListener implements TransportListener {
     if (!this.probe.isProbeActive(this.generation)) {
       return;
     }
-    this.probe.logger.info(TAG, 'initiator connected, sending PING probeId=' + this.probe.probeId);
-    const ping = new ProbeMessage('PING', this.probe.probeId);
+    this.probe.logger.info(TAG, 'initiator connected, sending PING');
+    const ping: CrossDeviceSpikeMessage = this.probe.codec.createPing(this.probe.probeId);
     const transport = this.probe.transport;
     if (transport === null) {
       return;
     }
-    transport.send(JSON.stringify(ping))
+    transport.send(this.probe.codec.encode(ping))
       .then(() => {
         if (this.probe.isProbeActive(this.generation)) {
           this.probe.logger.info(TAG, 'PING sent');
@@ -58,8 +52,8 @@ class InitiatorListener implements TransportListener {
       return;
     }
     try {
-      const msg = JSON.parse(text) as ProbeMessage;
-      if (msg.type === 'PONG' && msg.probeId === this.probe.probeId) {
+      const msg: CrossDeviceSpikeMessage = this.probe.codec.decode(text);
+      if (msg.messageType === 'PONG' && msg.requestId === this.probe.probeId) {
         this.probe.logger.info(TAG, 'PROBE_PASS - received matching PONG');
         this.probe.settle('PROBE_PASS');
         this.probe.transport?.disconnect();
@@ -105,14 +99,14 @@ class ResponderListener implements TransportListener {
       return;
     }
     try {
-      const msg = JSON.parse(text) as ProbeMessage;
-      if (msg.type === 'PING') {
-        this.probe.logger.info(TAG, 'responder received PING, replying PONG probeId=' + msg.probeId);
+      const msg: CrossDeviceSpikeMessage = this.probe.codec.decode(text);
+      if (msg.messageType === 'PING') {
+        this.probe.logger.info(TAG, 'responder received PING, replying PONG');
         const transport = this.probe.transport;
         if (transport === null) {
           return;
         }
-        transport.send(JSON.stringify(new ProbeMessage('PONG', msg.probeId)))
+        transport.send(this.probe.codec.encode(this.probe.codec.createPong(msg.requestId)))
           .then(() => {
             this.probe.logger.info(TAG, 'PONG sent');
           })
@@ -160,6 +154,7 @@ export class CollaborationProbe {
   permissionReady: boolean = false;
   /*internal*/ transport: CollaborationTransport | null = null;
   /*internal*/ logger: Logger;
+  /*internal*/ codec: CrossDevicePingPongSpikeCodec = new CrossDevicePingPongSpikeCodec();
   /*internal*/ probeId: string = '';
   private timeoutTimer: number = -1;
   private context: common.UIAbilityContext;

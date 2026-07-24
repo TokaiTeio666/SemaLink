@@ -1,3 +1,6 @@
+import { normalizeKnowledgeDomain } from
+  '../../contracts/semantic/KnowledgeDomainNormalizer';
+
 const QUERY_STOP_WORDS: string[] = [
   '为什么', '有什么', '有哪些', '是什么', '怎么样', '怎么', '如何', '是否',
   '有关', '关于', '内容', '数据', '发生', '特性', '作用', '区别', '可以',
@@ -57,7 +60,7 @@ function isDigit(code: number): boolean {
 }
 
 function addUnique(values: string[], seen: Set<string>, value: string): void {
-  const normalized = value.toLowerCase().trim();
+  const normalized = normalizeKnowledgeDomain(value);
   if (normalized.length > 0 && !seen.has(normalized)) {
     seen.add(normalized);
     values.push(normalized);

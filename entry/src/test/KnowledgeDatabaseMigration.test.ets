@@ -21,8 +21,8 @@ function capturedCode(action: () => void): string {
 
 export default function knowledgeDatabaseMigrationTest() {
   describe('KnowledgeDatabaseMigration', () => {
-    it('defines v2 with a non-null PRIVATE_GROUP privacy column', 0, () => {
-      expect(KNOWLEDGE_DATABASE_VERSION).assertEqual(2);
+    it('defines v3 with the existing non-null PRIVATE_GROUP privacy column', 0, () => {
+      expect(KNOWLEDGE_DATABASE_VERSION).assertEqual(3);
       expect(CREATE_DOCUMENTS_V2).assertContain("privacy_level TEXT NOT NULL DEFAULT 'PRIVATE_GROUP'");
     });
 
@@ -45,12 +45,12 @@ export default function knowledgeDatabaseMigrationTest() {
       expect(freshOrRecoveredVersionZero.length).assertEqual(0);
     });
 
-    it('rejects a v2 documents schema that is missing the required privacy column', 0, () => {
-      expect(capturedCode((): void => { migrationStatements(2, false); })).assertEqual('E_STORAGE_FAILED');
+    it('rejects a v3 documents schema that is missing the required privacy column', 0, () => {
+      expect(capturedCode((): void => { migrationStatements(3, false); })).assertEqual('E_STORAGE_FAILED');
     });
 
     it('rejects unknown future database versions without downgrade', 0, () => {
-      expect(capturedCode((): void => { migrationStatements(3, true); })).assertEqual('E_STORAGE_FAILED');
+      expect(capturedCode((): void => { migrationStatements(4, true); })).assertEqual('E_STORAGE_FAILED');
     });
 
     it('maps only known stored privacy values and fails safely otherwise', 0, () => {

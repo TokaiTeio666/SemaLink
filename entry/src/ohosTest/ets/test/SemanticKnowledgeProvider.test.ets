@@ -13,6 +13,10 @@ import {
   SEMANTIC_ACCEPTANCE_DOCUMENTS
 } from '../../../test/support/SemanticFixtures';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { LocalFirstAgentKnowledgeQueryService } from '../../../main/ets/agent/query/LocalFirstAgentKnowledgeQueryService';
+import { UnavailableCrossDeviceKnowledgePort } from '../../../main/ets/agent/query/UnavailableCrossDeviceKnowledgePort';
+import { AgentQueryRequest, AgentQueryScope } from '../../../main/ets/agent/query/AgentQueryModels';
+import { KnowledgeAnswerFormatter } from '../../../main/ets/agent/query/KnowledgeAnswerFormatter';
 
 function request(taskId: string, privacyLevel: 'LOCAL_ONLY' | 'PRIVATE_GROUP',
   levels: ('L1' | 'L2')[] = ['L1', 'L2']): TaskRequest {
@@ -148,6 +152,26 @@ export default function semanticKnowledgeProviderDeviceTest(): void {
           expect(levelsMatch).assertTrue();
         }
         hilog.info(0x534C, 'RdbSemanticAcceptance', 'passed=%{public}d', SEMANTIC_ACCEPTANCE_CASES.length);
+      } finally {
+        await components.repository.clearAll();
+        components.database.close();
+      }
+    });
+
+    it('formats Agent output from the real local RDB provider without a remote adapter', 0, async () => {
+      const ability = await abilityDelegatorRegistry.getAbilityDelegator().getCurrentTopAbility();
+      const components = await KnowledgeCompositionRoot.create(ability.context, 'agent-device-fixture');
+      await components.repository.clearAll();
+      try {
+        await components.importer.importBuiltInDocuments();
+        const service = new LocalFirstAgentKnowledgeQueryService(
+          components.provider, new UnavailableCrossDeviceKnowledgePort());
+        const result = await service.query(new AgentQueryRequest(
+          'agent-device-local', 'process and thread', AgentQueryScope.LOCAL_AND_REMOTE));
+        const answer = new KnowledgeAnswerFormatter().format(result);
+        expect(result.queriedLocal).assertTrue();
+        expect(result.queriedRemote).assertFalse();
+        expect(answer.length > 0).assertTrue();
       } finally {
         await components.repository.clearAll();
         components.database.close();

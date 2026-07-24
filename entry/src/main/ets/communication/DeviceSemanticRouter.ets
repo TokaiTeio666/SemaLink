@@ -4,6 +4,8 @@ import {
   TaskRequest
 } from '../contracts/semantic/SemanticModels';
 import { DeviceRoutingCandidate } from './DeviceDirectory';
+import { normalizeKnowledgeDomain } from
+  '../contracts/semantic/KnowledgeDomainNormalizer';
 
 export type RoutingExclusionReason =
   | 'LOCAL_ONLY_REMOTE'
@@ -26,6 +28,8 @@ export interface RoutingSubscores {
 export interface RoutedDevice {
   candidate: DeviceRoutingCandidate;
   scores: RoutingSubscores;
+  matchedDomain: string;
+  normalizedMatchedDomain: string;
 }
 
 export interface ExcludedDevice {
@@ -37,6 +41,12 @@ export interface RoutingResult {
   selected: RoutedDevice | null;
   routed: RoutedDevice[];
   excluded: ExcludedDevice[];
+}
+
+interface DomainMatch {
+  matchedCount: number;
+  matchedDomain: string;
+  normalizedMatchedDomain: string;
 }
 
 const PROFILE_TTL_MS: number = 5 * 60 * 1000;
@@ -65,7 +75,14 @@ export class DeviceSemanticRouter {
         excluded.push({ candidate: candidate, reason: reason });
         continue;
       }
-      routed.push({ candidate: candidate, scores: this.score(task, candidate, nowMs) });
+      const match = this.domainMatch(task.requiredConcepts,
+        candidate.profile.knowledgeDomains);
+      routed.push({
+        candidate: candidate,
+        scores: this.score(task, candidate, nowMs, match.matchedCount),
+        matchedDomain: match.matchedDomain,
+        normalizedMatchedDomain: match.normalizedMatchedDomain
+      });
     }
     routed.sort((left: RoutedDevice, right: RoutedDevice): number => {
       const difference: number = right.scores.total - left.scores.total;
@@ -128,10 +145,12 @@ export class DeviceSemanticRouter {
     return null;
   }
 
-  private score(task: TaskRequest, candidate: DeviceRoutingCandidate, nowMs: number): RoutingSubscores {
+  private score(task: TaskRequest, candidate: DeviceRoutingCandidate,
+    nowMs: number, matchedCount: number): RoutingSubscores {
     const snapshot: DeviceRuntimeSnapshot = candidate.snapshot;
     const profile: DeviceProfileAdvertisement = candidate.profile;
-    const semanticMatch: number = this.semanticMatch(task.requiredConcepts, profile.knowledgeDomains);
+    const semanticMatch: number = task.requiredConcepts.length === 0
+      ? 0 : matchedCount / task.requiredConcepts.length;
     const filterMatch: number = 1;
     const ageMs: number = Math.max(0, nowMs - profile.advertisedAtMs);
     const profileTtlMs: number = profile.ttlMs > 0 ? profile.ttlMs : PROFILE_TTL_MS;
@@ -152,16 +171,28 @@ export class DeviceSemanticRouter {
     };
   }
 
-  private semanticMatch(requiredConcepts: string[], domains: string[]): number {
-    if (requiredConcepts.length === 0) {
-      return 0;
-    }
+  private domainMatch(requiredConcepts: string[], domains: string[]): DomainMatch {
+    const normalizedDomains: string[] = domains.map(
+      (domain: string): string => normalizeKnowledgeDomain(domain)
+    );
     let matched: number = 0;
+    let matchedDomain: string = '';
+    let normalizedMatchedDomain: string = '';
     for (const concept of requiredConcepts) {
-      if (includes(domains, concept)) {
+      const normalizedConcept: string = normalizeKnowledgeDomain(concept);
+      const domainIndex: number = normalizedDomains.indexOf(normalizedConcept);
+      if (normalizedConcept.length > 0 && domainIndex >= 0) {
         matched++;
+        if (matchedDomain.length === 0) {
+          matchedDomain = domains[domainIndex];
+          normalizedMatchedDomain = normalizedDomains[domainIndex];
+        }
       }
     }
-    return matched / requiredConcepts.length;
+    return {
+      matchedCount: matched,
+      matchedDomain: matchedDomain,
+      normalizedMatchedDomain: normalizedMatchedDomain
+    };
   }
 }

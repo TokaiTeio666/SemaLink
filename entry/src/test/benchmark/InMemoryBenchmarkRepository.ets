@@ -38,6 +38,14 @@ export class InMemoryBenchmarkRepository implements DocumentRepository {
     return false;
   }
 
+  async listDocuments(): Promise<KnowledgeDocument[]> {
+    return this.documents.slice();
+  }
+
+  async listChunks(): Promise<DocumentChunk[]> {
+    return this.chunks.slice();
+  }
+
   async clearAll(): Promise<void> {
     this.documents = [];
     this.chunks = [];

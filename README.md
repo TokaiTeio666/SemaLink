@@ -194,7 +194,8 @@ hvigorw --mode module -p product=default -p module=entry@default -p buildMode=de
 
 - 本项目为学习、竞赛与研究用途的原型，尚未达到生产可用标准；
 - 仓库中的性能数值分为「验收目标」与「实测结果」，未标注实测的数据不应视为已达成；
-- 日志与验收记录只保留脱敏后的设备别名、稳定错误码和有限数值，不记录设备标识、文件路径、SQL 或文档正文。
+- 日志与验收记录只保留脱敏后的设备别名、稳定错误码和有限数值，不记录设备标识、文件路径、SQL 或文档正文；
+- 请勿把 `build-profile.json5` 中的 `signingConfigs`（证书路径与密码）提交到版本库，签名配置应只保留在本地。
 
 ## License
 

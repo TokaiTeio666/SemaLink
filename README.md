@@ -164,7 +164,7 @@ scripts/             部署脚本与本地检索 benchmark
 **运行**
 
 1. 用 DevEco Studio 打开项目；
-2. 在 `build-profile.json5` 中替换为你自己的签名配置（仓库里是作者本机的调试签名）；
+2. 在 DevEco Studio 中配置你自己的签名（File → Project Structure → Signing Configs）；
 3. 连接真机，执行 `Run` 安装到所有参与协同的设备。
 
 **命令行构建 / 测试**
